@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#07080A" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>Gestor VTT</title>
+  <link rel="icon" type="image/png" href="img/favicon-32x32.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/gestor.css" />
+</head>
+<body>
+
+<div id="carregando" class="carregando" hidden></div>
+
+<!-- ================= Login ================= -->
+<section class="login" id="tela-login">
+  <form id="form-login">
+    <h1>Gestor <span>VTT</span></h1>
+    <label class="f">E-mail
+      <input class="inp" type="email" id="email" autocomplete="username" required />
+    </label>
+    <label class="f">Senha
+      <input class="inp" type="password" id="senha" autocomplete="current-password" required />
+    </label>
+    <p class="erro" id="erro-login" hidden></p>
+    <button class="btn btn--primary" type="submit" id="btn-entrar">Entrar</button>
+  </form>
+</section>
+
+<!-- ================= App ================= -->
+<div id="app" hidden>
+  <header class="top">
+    <div class="top__bar">
+      <h1>Gestor <span>VTT</span></h1>
+      <nav class="tabs" role="tablist">
+        <button class="tab" role="tab" data-tab="pedidos" aria-selected="true">Pedidos<span class="badge-n" id="n-pend" hidden></span></button>
+        <button class="tab" role="tab" data-tab="estoque" aria-selected="false">Estoque<span class="badge-n" id="n-baixo" hidden></span></button>
+        <button class="tab" role="tab" data-tab="movs" aria-selected="false">Histórico</button>
+        <button class="tab" role="tab" data-tab="usuarios" aria-selected="false" id="tab-btn-usuarios" hidden>Usuários</button>
+      </nav>
+      <span class="top__usuario" id="top-usuario"></span>
+      <button class="btn btn--sm top__sair" type="button" id="btn-sair">Sair</button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <!-- Pedidos -->
+    <section id="tab-pedidos">
+      <div class="filtros">
+        <div class="seg" id="seg-periodo">
+          <button type="button" data-p="dia" aria-pressed="true">Dia</button>
+          <button type="button" data-p="mes" aria-pressed="false">Mês</button>
+          <button type="button" data-p="ano" aria-pressed="false">Ano</button>
+          <button type="button" data-p="tudo" aria-pressed="false">Tudo</button>
+        </div>
+        <input class="inp" id="f-dia" type="date" aria-label="Dia" />
+        <input class="inp" id="f-mes" type="month" aria-label="Mês" hidden />
+        <select class="inp" id="f-ano" aria-label="Ano" hidden></select>
+        <select class="inp" id="f-status" aria-label="Status">
+          <option value="">Todos os status</option>
+          <option>Pendente</option>
+          <option>Confirmada</option>
+          <option>Cancelada</option>
+        </select>
+        <button class="btn" type="button" id="btn-atualizar">Atualizar</button>
+      </div>
+
+      <div class="resumo">
+        <div class="principal"><div class="v" id="r-fat">R$ 0,00</div><div class="l">Faturamento confirmado</div></div>
+        <div><div class="v" id="r-qtd">0</div><div class="l">Vendas confirmadas</div></div>
+        <div><div class="v" id="r-ticket">—</div><div class="l">Ticket médio</div></div>
+        <div><div class="v" id="r-pend">0</div><div class="l">Aguardando confirmação</div></div>
+      </div>
+      <div class="top5" id="top5"></div>
+
+      <div class="lista" id="lista-pedidos"></div>
+    </section>
+
+    <!-- Estoque -->
+    <section id="tab-estoque" hidden>
+      <div class="filtros">
+        <label class="f cresce">Buscar
+          <input class="inp" id="busca" type="search" placeholder="ID, produto ou categoria" />
+        </label>
+        <label class="chk"><input type="checkbox" id="so-baixo" /> Só estoque baixo</label>
+        <button class="btn" type="button" id="btn-categorias">Categorias</button>
+        <button class="btn btn--primary" type="button" id="btn-novo">Novo produto</button>
+      </div>
+      <div id="lista-estoque"></div>
+    </section>
+
+    <!-- Histórico -->
+    <section id="tab-movs" hidden>
+      <div class="filtros">
+        <label class="f cresce">Buscar
+          <input class="inp" id="busca-movs" type="search" placeholder="Produto, pedido ou tipo" />
+        </label>
+      </div>
+      <div class="grupo tabela">
+        <table>
+          <thead><tr><th>Data</th><th>ID</th><th>Produto</th><th>Tipo</th><th class="n">Qtd</th><th class="n">Ficou</th><th>Ref.</th><th>Obs.</th></tr></thead>
+          <tbody id="lista-movs"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Usuários (só administrador) -->
+    <section id="tab-usuarios" hidden>
+      <div class="filtros">
+        <p class="dlg-sub sem-margem cresce-texto">
+          <strong>Administrador</strong> usa o Gestor e cadastra usuários. <strong>Operador</strong> usa o Gestor (pedidos, estoque e produtos), mas não mexe em usuários.
+        </p>
+        <button class="btn btn--primary" type="button" id="btn-novo-usuario">Novo usuário</button>
+      </div>
+      <div id="lista-usuarios"></div>
+    </section>
+  </main>
+</div>
+
+<!-- Confirmar venda -->
+<dialog id="dlg-confirmar">
+  <form method="dialog">
+    <h2>Confirmar venda</h2>
+    <p class="dlg-sub" id="conf-sub"></p>
+    <ul class="dlg-itens" id="conf-itens"></ul>
+    <div class="linha2">
+      <label class="f">Valor recebido (R$)
+        <input class="inp" id="conf-valor" type="number" step="0.01" min="0" required />
+      </label>
+      <label class="f">Pagamento
+        <select class="inp" id="conf-pag">
+          <option>Pix</option><option>Dinheiro</option><option>Cartão de crédito</option><option>Cartão de débito</option><option>Outro</option>
+        </select>
+      </label>
+    </div>
+    <p class="dlg-sub sem-margem">Ao confirmar, as peças saem do estoque.</p>
+    <div class="dlg-acoes">
+      <button class="btn" value="cancel" formnovalidate>Voltar</button>
+      <button class="btn btn--primary" value="ok" id="conf-ok">Confirmar</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Cancelar / estornar -->
+<dialog id="dlg-cancelar">
+  <form method="dialog">
+    <h2 id="canc-titulo">Cancelar pedido</h2>
+    <p class="dlg-sub" id="canc-sub"></p>
+    <label class="f">Motivo (opcional)
+      <input class="inp" id="canc-motivo" maxlength="200" placeholder="Ex.: cliente desistiu" />
+    </label>
+    <div class="dlg-acoes">
+      <button class="btn" value="cancel" formnovalidate>Voltar</button>
+      <button class="btn btn--danger" value="ok" id="canc-ok">Cancelar pedido</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Ajustar estoque -->
+<dialog id="dlg-ajustar">
+  <form method="dialog">
+    <h2>Ajustar estoque</h2>
+    <p class="dlg-sub" id="aj-sub"></p>
+    <div class="seg" id="aj-tipo">
+      <button type="button" data-t="entrada" aria-pressed="true">Entrada</button>
+      <button type="button" data-t="saida" aria-pressed="false">Saída</button>
+      <button type="button" data-t="correcao" aria-pressed="false">Contagem</button>
+    </div>
+    <label class="f"><span id="aj-label">Quantidade que chegou</span>
+      <input class="inp" id="aj-qtd" type="number" min="0" step="1" required />
+    </label>
+    <p class="dlg-sub sem-margem" id="aj-previa"></p>
+    <label class="f">Observação (opcional)
+      <input class="inp" id="aj-obs" maxlength="200" placeholder="Ex.: reposição do fornecedor, brinde, avaria" />
+    </label>
+    <div class="dlg-acoes">
+      <button class="btn" value="cancel" formnovalidate>Voltar</button>
+      <button class="btn btn--primary" value="ok">Salvar</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Produto (novo ou editar) -->
+<dialog id="dlg-produto" class="dlg-largo">
+  <form method="dialog" id="form-produto">
+    <h2 id="pr-titulo">Novo produto</h2>
+    <p class="dlg-sub" id="pr-sub"></p>
+
+    <div class="pr-imagem">
+      <img id="pr-preview" src="img/sem-imagem.svg" alt="Imagem do produto" />
+      <div class="pr-imagem__acoes">
+        <label class="btn btn--sm" for="pr-arquivo">Escolher imagem</label>
+        <input type="file" id="pr-arquivo" accept="image/*" hidden />
+        <button type="button" class="btn btn--sm btn--danger" id="pr-remover-img">Remover imagem</button>
+        <span class="dlg-sub sem-margem">Sem imagem, o site mostra a imagem genérica.</span>
+      </div>
+    </div>
+
+    <label class="f">Nome<input class="inp" id="pr-nome" maxlength="80" required /></label>
+    <div class="linha2">
+      <label class="f">Categoria
+        <select class="inp" id="pr-cat" required></select>
+      </label>
+      <label class="f">Preço (R$)<input class="inp" id="pr-preco" type="number" step="0.01" min="0" required /></label>
+    </div>
+    <label class="f">Descrição (aparece no site)
+      <textarea class="inp" id="pr-desc" rows="3" maxlength="300"></textarea>
+    </label>
+    <div class="linha2">
+      <label class="f" id="pr-est-campo">Estoque inicial<input class="inp" id="pr-est" type="number" min="0" step="1" value="0" /></label>
+      <label class="f">Estoque mínimo<input class="inp" id="pr-min" type="number" min="0" step="1" value="2" /></label>
+    </div>
+    <label class="chk"><input type="checkbox" id="pr-ativo" checked /> Aparece no site</label>
+    <div class="dlg-acoes">
+      <button class="btn" value="cancel" formnovalidate>Voltar</button>
+      <button class="btn btn--primary" value="ok" id="pr-salvar">Salvar</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Categorias -->
+<dialog id="dlg-categorias" class="dlg-largo">
+  <form method="dialog" id="form-categorias">
+    <h2>Categorias</h2>
+    <p class="dlg-sub">A ordem aqui é a ordem dos botões de categoria no site. Categoria desativada some do site junto com os produtos dela.</p>
+    <ul class="cats" id="lista-cats"></ul>
+    <div class="cats__nova">
+      <input class="inp" id="cat-nova" maxlength="40" placeholder="Nova categoria" />
+      <button type="button" class="btn btn--primary" id="cat-adicionar">Adicionar</button>
+    </div>
+    <div class="dlg-acoes">
+      <button class="btn" value="cancel" formnovalidate>Fechar</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Usuário: novo ou editar -->
+<dialog id="dlg-usuario">
+  <form method="dialog" id="form-usuario">
+    <h2 id="us-titulo">Novo usuário</h2>
+    <p class="dlg-sub" id="us-sub"></p>
+    <label class="f">Nome<input class="inp" id="us-nome" maxlength="60" required /></label>
+    <label class="f" id="us-email-campo">E-mail (é o login)<input class="inp" id="us-email" type="email" maxlength="120" autocomplete="off" /></label>
+    <label class="f" id="us-senha-campo">Senha (mínimo 8 caracteres)<input class="inp" id="us-senha" type="password" minlength="8" autocomplete="new-password" /></label>
+    <label class="f">Perfil
+      <select class="inp" id="us-perfil">
+        <option value="operador">Operador</option>
+        <option value="admin">Administrador</option>
+      </select>
+    </label>
+    <p class="erro" id="us-erro" hidden></p>
+    <div class="dlg-acoes">
+      <button class="btn" type="button" data-fechar-dlg>Voltar</button>
+      <button class="btn btn--primary" type="submit" id="us-salvar">Salvar</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Usuário: nova senha -->
+<dialog id="dlg-senha">
+  <form method="dialog" id="form-senha">
+    <h2>Trocar senha</h2>
+    <p class="dlg-sub" id="se-sub"></p>
+    <label class="f">Nova senha (mínimo 8 caracteres)<input class="inp" id="se-senha" type="password" minlength="8" autocomplete="new-password" required /></label>
+    <label class="f">Repita a nova senha<input class="inp" id="se-senha2" type="password" minlength="8" autocomplete="new-password" required /></label>
+    <p class="erro" id="se-erro" hidden></p>
+    <div class="dlg-acoes">
+      <button class="btn" type="button" data-fechar-dlg>Voltar</button>
+      <button class="btn btn--primary" type="submit" id="se-salvar">Salvar senha</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Usuário: excluir -->
+<dialog id="dlg-excluir-usuario">
+  <form method="dialog" id="form-excluir-usuario">
+    <h2>Excluir usuário</h2>
+    <p class="dlg-sub" id="ex-sub"></p>
+    <p class="dlg-sub sem-margem">Se for só uma pausa, prefira <strong>Desativar</strong>: dá para reativar depois.</p>
+    <p class="erro" id="ex-erro" hidden></p>
+    <div class="dlg-acoes">
+      <button class="btn" type="button" data-fechar-dlg>Voltar</button>
+      <button class="btn btn--danger" type="submit" id="ex-confirmar">Excluir</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" hidden></div>
+
+<!-- Biblioteca oficial do Supabase (versão fixa) -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="js/config.js"></script>
+<script src="js/gestor.js"></script>
+</body>
+</html>
