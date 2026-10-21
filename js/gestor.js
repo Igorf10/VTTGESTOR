@@ -70,11 +70,16 @@
       sb.rpc('meu_perfil'),
       sb.from('usuarios_gestor').select('*'),
       sb.auth.getSession(),
+      sb.from('produto_fotos').select('*').order('ordem').order('id'),
     ]).then(function (res) {
       var perfil = checar(res[4]);
       if (!perfil || !perfil.ativo) throw new Error('SEM_ACESSO');
       var pedidos = checar(res[0]) || [], produtos = checar(res[1]) || [], movs = checar(res[2]) || [], cats = checar(res[3]) || [];
       var sessao = res[6] && res[6].data && res[6].data.session;
+      var fotosPorProduto = {};
+      (checar(res[7]) || []).forEach(function (f) {
+        (fotosPorProduto[f.produto_id] = fotosPorProduto[f.produto_id] || []).push({ id: f.id, url: f.url, caminho: f.caminho });
+      });
       return {
         eu: { id: sessao ? sessao.user.id : '', nome: perfil.nome, email: perfil.email, perfil: perfil.perfil },
         usuarios: checar(res[5]) || [],
@@ -92,7 +97,9 @@
         produtos: produtos.map(function (v) {
           return {
             id: v.id, produto: v.nome, categoria: v.categorias ? v.categorias.nome : '', preco: Number(v.preco),
+            precoPromo: v.preco_promocional == null ? null : Number(v.preco_promocional),
             estoque: v.estoque, minimo: v.minimo, ativo: v.ativo, descricao: v.descricao || '', imagem: v.imagem || '',
+            fotos: fotosPorProduto[v.id] || [],
           };
         }),
         movs: movs.map(function (m) {
@@ -101,7 +108,7 @@
             qtd: m.qtd, estoqueApos: m.estoque_apos, ref: m.referencia || '', obs: m.obs || '',
           };
         }),
-        categorias: cats.map(function (c) { return { id: c.id, nome: c.nome, ativa: c.ativa }; }),
+        categorias: cats.map(function (c) { return { id: c.id, nome: c.nome, ativa: c.ativa, fixa: !!c.fixa }; }),
       };
     });
   }
@@ -114,33 +121,40 @@
     return new Blob([bytes], { type: tipo });
   }
 
-  // Apaga as imagens do produto, menos a que deve ficar
-  function limparImagens(idProduto, manter) {
-    return sb.storage.from(BUCKET_IMAGENS).list(idProduto).then(checar).then(function (arquivos) {
-      var apagar = (arquivos || [])
-        .map(function (a) { return idProduto + '/' + a.name; })
-        .filter(function (caminho) { return caminho !== manter; });
-      if (!apagar.length) return;
-      return sb.storage.from(BUCKET_IMAGENS).remove(apagar).then(checar);
+  // Grava as fotos do produto: apaga as removidas, envia as novas e salva a ordem (a 1ª é a capa)
+  function salvarFotos(idProduto, lista, removidas) {
+    var passo = Promise.resolve();
+    var ids = [];
+
+    (removidas || []).forEach(function (idFoto) {
+      passo = passo
+        .then(function () { return rpc('remover_foto', { p_foto: idFoto }); })
+        .then(function (caminho) {
+          if (!caminho) return;
+          // Se o arquivo não apagar, não trava o resto (só sobra um arquivo solto no Storage)
+          return sb.storage.from(BUCKET_IMAGENS).remove([caminho]).catch(function () {});
+        });
     });
-  }
 
-  function enviarImagem(idProduto, base64, tipo) {
-    // Nome novo a cada envio: o navegador nunca mostra a foto antiga guardada em cache
-    var caminho = idProduto + '/' + Date.now() + '.jpg';
-    return sb.storage.from(BUCKET_IMAGENS)
-      .upload(caminho, base64ParaBlob(base64, tipo), { contentType: tipo, upsert: false })
-      .then(checar)
-      .then(function () {
-        var url = sb.storage.from(BUCKET_IMAGENS).getPublicUrl(caminho).data.publicUrl;
-        return rpc('definir_imagem', { p_id: idProduto, p_imagem: url });
-      })
-      .then(function () { return limparImagens(idProduto, caminho); });
-  }
+    (lista || []).forEach(function (f, i) {
+      passo = passo.then(function () {
+        if (!f.novo) { ids.push(f.id); return; }
+        // Nome novo a cada envio: o navegador nunca mostra uma foto antiga guardada em cache
+        var caminho = idProduto + '/' + Date.now() + '-' + i + '.jpg';
+        return sb.storage.from(BUCKET_IMAGENS)
+          .upload(caminho, base64ParaBlob(f.base64, f.tipo), { contentType: f.tipo, upsert: false })
+          .then(checar)
+          .then(function () {
+            var url = sb.storage.from(BUCKET_IMAGENS).getPublicUrl(caminho).data.publicUrl;
+            return rpc('adicionar_foto', { p_produto: idProduto, p_url: url, p_caminho: caminho });
+          })
+          .then(function (idFoto) { ids.push(idFoto); });
+      });
+    });
 
-  function removerImagemDoProduto(idProduto) {
-    return rpc('definir_imagem', { p_id: idProduto, p_imagem: '' })
-      .then(function () { return limparImagens(idProduto, null); });
+    return passo.then(function () {
+      if (ids.length) return rpc('ordenar_fotos', { p_produto: idProduto, p_ids: ids });
+    });
   }
 
   // ---- Usuários: Edge Function "gerenciar-usuarios" (roda no Supabase com a chave secreta)
@@ -182,16 +196,17 @@
       return rpc('novo_produto', {
         p_nome: d.produto, p_categoria: d.categoria, p_preco: numero(d.preco), p_descricao: d.descricao || '',
         p_estoque: inteiro(d.estoque), p_minimo: inteiro(d.minimo), p_ativo: d.ativo !== false,
+        p_preco_promocional: d.precoPromo === '' || d.precoPromo == null ? null : numero(d.precoPromo),
       }).then(function (id) { return { novoId: id }; });
     },
     editar: function (d) {
       return rpc('editar_produto', {
         p_id: d.idProduto, p_nome: d.produto, p_categoria: d.categoria, p_preco: numero(d.preco),
         p_descricao: d.descricao || '', p_minimo: inteiro(d.minimo), p_ativo: !!d.ativo,
+        p_preco_promocional: d.precoPromo === '' || d.precoPromo == null ? null : numero(d.precoPromo),
       });
     },
-    imagem: function (d) { return enviarImagem(d.idProduto, d.base64, d.tipo); },
-    removerImagem: function (d) { return removerImagemDoProduto(d.idProduto); },
+    fotos: function (d) { return salvarFotos(d.idProduto, d.lista, d.removidas); },
     categoriaSalvar: function (d) { return rpc('salvar_categoria', { p_nome: d.nome, p_antigo: d.antigo || '' }); },
     categoriaMover: function (d) { return rpc('mover_categoria', { p_nome: d.nome, p_direcao: d.direcao }); },
     categoriaAtivar: function (d) { return rpc('ativar_categoria', { p_nome: d.nome, p_ativa: !!d.ativa }); },
@@ -532,6 +547,11 @@
     return !c || c.ativa;
   }
 
+  function precoCelula(v) {
+    if (v.precoPromo == null) return reais(v.preco);
+    return '<span class="promo-tag">PROMO</span> <s class="preco-de">' + reais(v.preco) + '</s> ' + reais(v.precoPromo);
+  }
+
   function renderEstoque() {
     var q = $('busca').value.trim().toLowerCase();
     var soBaixo = $('so-baixo').checked;
@@ -553,7 +573,7 @@
           return '<tr class="' + estadoVar(v) + '">' +
             '<td><img class="thumb" src="' + esc(imagemDe(v)) + '" alt="" loading="lazy" data-produto-img /></td>' +
             '<td class="id">' + esc(v.id) + '</td><td class="nome">' + esc(v.produto) + esc(foraDoSite) + '</td>' +
-            '<td class="m-oculta">' + esc(v.categoria) + '</td><td class="n m-oculta">' + reais(v.preco) + '</td>' +
+            '<td class="m-oculta">' + esc(v.categoria) + '</td><td class="n m-oculta">' + precoCelula(v) + '</td>' +
             '<td class="n est">' + v.estoque + '</td><td class="n m-oculta">' + (pend[v.id] || '—') + '</td><td class="n m-oculta">' + v.minimo + '</td>' +
             '<td class="n"><div class="acoes"><button class="btn btn--sm" data-ajustar="' + esc(v.id) + '">Ajustar</button>' +
             '<button class="btn btn--sm" data-editar="' + esc(v.id) + '">Editar</button></div></td></tr>';
@@ -613,8 +633,10 @@
   /* ---------- Produto: novo e editar ---------- */
 
   var produtoEditando = null;          // null = produto novo
-  var imagemEscolhida = null;          // { base64, tipo, dataUrl } a enviar
-  var removerImagem = false;
+  var MAX_FOTOS = 4;
+  var fotosEdit = [];                  // fotos no formulário, na ordem: { id, url } ou { novo, dataUrl, base64, tipo }
+  var fotosRemovidas = [];             // ids das fotos já salvas que foram removidas
+  var ordemOriginal = '';
 
   // Só para mostrar no formulário; quem define o ID de verdade é a API
   function proximoIdPrevisto() {
@@ -624,7 +646,7 @@
   }
 
   function preencherSelectCategorias(atual) {
-    var cats = (dados.categorias || []).map(function (c) { return c.nome; });
+    var cats = (dados.categorias || []).filter(function (c) { return !c.fixa; }).map(function (c) { return c.nome; });
     if (atual && cats.every(function (c) { return c.toLowerCase() !== atual.toLowerCase(); })) cats.push(atual);
     $('pr-cat').innerHTML = '<option value="">Escolha…</option>' + cats.map(function (c) {
       return '<option' + (atual && c.toLowerCase() === atual.toLowerCase() ? ' selected' : '') + '>' + esc(c) + '</option>';
@@ -633,8 +655,9 @@
 
   function abrirProduto(v) {
     produtoEditando = v;
-    imagemEscolhida = null;
-    removerImagem = false;
+    fotosEdit = v ? v.fotos.map(function (f) { return { id: f.id, url: f.url }; }) : [];
+    fotosRemovidas = [];
+    ordemOriginal = fotosEdit.map(function (f) { return f.id; }).join(',');
     $('pr-arquivo').value = '';
     var novo = !v;
     $('pr-titulo').textContent = novo ? 'Novo produto' : 'Editar ' + v.id;
@@ -644,22 +667,69 @@
     $('pr-nome').value = novo ? '' : v.produto;
     preencherSelectCategorias(novo ? '' : v.categoria);
     $('pr-preco').value = novo ? '' : v.preco.toFixed(2);
+    $('pr-promo').value = novo || v.precoPromo == null ? '' : v.precoPromo.toFixed(2);
+    // Promoção é só com o administrador
+    var admin = souAdmin();
+    $('pr-promo').disabled = !admin;
+    $('pr-preco').disabled = !admin && !novo && v.precoPromo != null;
+    $('pr-promo-dica').textContent = admin
+      ? 'Deixe em branco para vender pelo preço "De". Com valor, o produto aparece também na categoria Promoção do site.'
+      : 'Só o administrador coloca ou muda promoção.';
+    $('pr-erro').hidden = true;
     $('pr-desc').value = novo ? '' : v.descricao;
     $('pr-est').value = 0;
     $('pr-est-campo').hidden = !novo;
     $('pr-min').value = novo ? 2 : v.minimo;
     $('pr-ativo').checked = novo ? true : v.ativo;
-    atualizarPreview();
+    renderFotosEdit();
     $('dlg-produto').showModal();
   }
 
-  function atualizarPreview() {
-    var src = imagemEscolhida ? imagemEscolhida.dataUrl
-      : (!removerImagem && produtoEditando) ? imagemDe(produtoEditando) : SEM_IMAGEM;
-    $('pr-preview').src = src;
-    $('pr-preview').setAttribute('data-produto-img', '');
-    var temImagem = !!imagemEscolhida || (!removerImagem && produtoEditando && produtoEditando.imagem);
-    $('pr-remover-img').hidden = !temImagem;
+  function renderFotosEdit() {
+    $('pr-fotos').innerHTML = fotosEdit.map(function (f, i) {
+      var ultimo = i === fotosEdit.length - 1;
+      return '<li class="pr-foto' + (i === 0 ? ' is-capa' : '') + '">' +
+        '<img src="' + esc(f.novo ? f.dataUrl : f.url) + '" alt="Foto ' + (i + 1) + '" data-produto-img />' +
+        (i === 0 ? '<span class="pr-foto__capa">Capa</span>' : '') +
+        '<div class="pr-foto__bts">' +
+          (i > 0 ? '<button type="button" class="cats__bt" data-foto-capa="' + i + '" title="Usar como capa" aria-label="Usar como capa">★</button>' : '') +
+          '<button type="button" class="cats__bt" data-foto-mover="' + i + '" data-dir="-1" title="Mover para a esquerda" aria-label="Mover para a esquerda"' + (i === 0 ? ' disabled' : '') + '>◀</button>' +
+          '<button type="button" class="cats__bt" data-foto-mover="' + i + '" data-dir="1" title="Mover para a direita" aria-label="Mover para a direita"' + (ultimo ? ' disabled' : '') + '>▶</button>' +
+          '<button type="button" class="cats__bt cats__bt--del" data-foto-remover="' + i + '" title="Remover foto" aria-label="Remover foto">✕</button>' +
+        '</div>' +
+      '</li>';
+    }).join('');
+    $('pr-fotos-cont').textContent = fotosEdit.length + '/' + MAX_FOTOS;
+    var cheio = fotosEdit.length >= MAX_FOTOS;
+    $('pr-add-foto').classList.toggle('is-desligado', cheio);
+    $('pr-arquivo').disabled = cheio;
+    $('pr-add-foto').textContent = cheio ? 'Limite de 4 fotos' : '+ Adicionar fotos';
+  }
+
+  $('pr-fotos').addEventListener('click', function (ev) {
+    var b = ev.target.closest('button');
+    if (!b || b.disabled) return;
+    var i, f;
+    if (b.hasAttribute('data-foto-capa')) {
+      i = Number(b.getAttribute('data-foto-capa'));
+      f = fotosEdit.splice(i, 1)[0];
+      fotosEdit.unshift(f);
+    } else if (b.hasAttribute('data-foto-mover')) {
+      i = Number(b.getAttribute('data-foto-mover'));
+      var j = i + Number(b.getAttribute('data-dir'));
+      f = fotosEdit[i]; fotosEdit[i] = fotosEdit[j]; fotosEdit[j] = f;
+    } else if (b.hasAttribute('data-foto-remover')) {
+      i = Number(b.getAttribute('data-foto-remover'));
+      f = fotosEdit.splice(i, 1)[0];
+      if (!f.novo) fotosRemovidas.push(f.id);
+    }
+    renderFotosEdit();
+  });
+
+  function fotosMudaram() {
+    return fotosRemovidas.length > 0 ||
+      fotosEdit.some(function (f) { return f.novo; }) ||
+      fotosEdit.map(function (f) { return f.id; }).join(',') !== ordemOriginal;
   }
 
   // Reduz a foto para no máximo 1000 px e JPG, para enviar rápido e não pesar no site
@@ -689,29 +759,48 @@
   }
 
   $('pr-arquivo').addEventListener('change', function () {
-    var arquivo = this.files && this.files[0];
-    if (!arquivo) return;
-    prepararImagem(arquivo)
-      .then(function (r) { imagemEscolhida = r; removerImagem = false; atualizarPreview(); })
-      .catch(function (e) { toast(e.message, true); });
-  });
-
-  $('pr-remover-img').addEventListener('click', function () {
-    imagemEscolhida = null;
-    removerImagem = true;
-    $('pr-arquivo').value = '';
-    atualizarPreview();
+    var arquivos = Array.prototype.slice.call(this.files || []);
+    this.value = '';
+    if (!arquivos.length) return;
+    var vagas = MAX_FOTOS - fotosEdit.length;
+    if (arquivos.length > vagas) toast('Cada produto aceita até 4 fotos. ' + (arquivos.length - vagas) + ' foto(s) ficaram de fora.', true);
+    arquivos = arquivos.slice(0, Math.max(0, vagas));
+    // Uma de cada vez, para manter a ordem escolhida
+    arquivos.reduce(function (p, arquivo) {
+      return p.then(function () { return prepararImagem(arquivo); })
+        .then(function (r) {
+          if (fotosEdit.length < MAX_FOTOS) fotosEdit.push({ novo: true, dataUrl: r.dataUrl, base64: r.base64, tipo: r.tipo });
+          renderFotosEdit();
+        })
+        .catch(function (e) { toast(e.message, true); });
+    }, Promise.resolve());
   });
 
   $('btn-novo').addEventListener('click', function () { abrirProduto(null); });
 
+  // Confere De/Por antes de fechar o formulário
+  $('form-produto').addEventListener('submit', function (ev) {
+    var de = parseFloat($('pr-preco').value), por = $('pr-promo').value.trim();
+    var msg = '';
+    if (por !== '' && !(parseFloat(por) >= 0)) msg = 'Preço "Por" inválido.';
+    else if (por !== '' && parseFloat(por) >= de) msg = 'O preço "Por" precisa ser menor que o preço "De".';
+    if (msg) {
+      ev.preventDefault();
+      $('pr-erro').textContent = msg;
+      $('pr-erro').hidden = false;
+      $('pr-promo').focus();
+    }
+  });
+
   $('dlg-produto').addEventListener('close', function () {
     if (this.returnValue !== 'ok') return;
     var editando = produtoEditando;
-    var imagem = imagemEscolhida;
-    var tirarImagem = removerImagem && editando && editando.imagem;
+    var mudouFotos = fotosMudaram();
+    var listaFotos = fotosEdit.slice();
+    var removidas = fotosRemovidas.slice();
     var dadosProduto = {
       produto: $('pr-nome').value, categoria: $('pr-cat').value, preco: $('pr-preco').value,
+      precoPromo: $('pr-promo').value.trim(),
       descricao: $('pr-desc').value, minimo: $('pr-min').value, ativo: $('pr-ativo').checked,
     };
 
@@ -727,12 +816,10 @@
     passo
       .then(function (x) {
         aplicar(x.r);
-        if (imagem) {
-          toast('Enviando imagem…');
-          return api('imagem', { idProduto: x.id, base64: imagem.base64, tipo: imagem.tipo }).then(function (r) { aplicar(r); return x.id; });
-        }
-        if (tirarImagem) return api('removerImagem', { idProduto: x.id }).then(function (r) { aplicar(r); return x.id; });
-        return x.id;
+        if (!mudouFotos) return x.id;
+        if (listaFotos.some(function (f) { return f.novo; })) toast('Enviando fotos…');
+        return api('fotos', { idProduto: x.id, lista: listaFotos, removidas: removidas })
+          .then(function (r) { aplicar(r); return x.id; });
       })
       .then(function (id) { toast(editando ? 'Produto ' + id + ' salvo' : 'Produto cadastrado com o ID ' + id); })
       .catch(function (e) { toast(e.message, true); });
@@ -760,6 +847,19 @@
           '<button type="button" class="cats__bt cats__bt--ok" data-acao="salvar-nome" aria-label="Salvar nome" title="Salvar (Enter)">✓</button>' +
           '<button type="button" class="cats__bt" data-acao="cancelar-nome" aria-label="Cancelar" title="Cancelar (Esc)">✕</button>' +
           '<span class="cats__dica">Os produtos dessa categoria acompanham o novo nome.</span>' +
+        '</li>';
+      }
+      if (c.fixa) {
+        // Categoria fixa "Promoção": não renomeia nem exclui; só o admin oculta/mostra
+        var qtdPromo = dados.produtos.filter(function (v) { return v.precoPromo != null && v.ativo; }).length;
+        return '<li class="cats__fixa' + (c.ativa ? '' : ' inativa') + '" data-cat="' + esc(c.nome) + '">' +
+          '<span class="cats__nome">' + esc(c.nome) + ' <span class="cats__selo">fixa</span></span>' +
+          '<span class="cats__qtd">' + qtdPromo + ' em promoção</span>' +
+          '<button type="button" class="cats__bt" data-acao="subir" aria-label="Subir"' + (i === 0 ? ' disabled' : '') + '>↑</button>' +
+          '<button type="button" class="cats__bt" data-acao="descer" aria-label="Descer"' + (i === cats.length - 1 ? ' disabled' : '') + '>↓</button>' +
+          '<button type="button" class="cats__bt" data-acao="ativar" aria-label="' + (c.ativa ? 'Ocultar' : 'Mostrar') + '" title="' +
+            (souAdmin() ? (c.ativa ? 'Ocultar do site' : 'Mostrar no site') : 'Só o administrador oculta ou mostra') + '"' +
+            (souAdmin() ? '' : ' disabled') + '>' + (c.ativa ? '●' : '○') + '</button>' +
         '</li>';
       }
       return '<li class="' + (c.ativa ? '' : 'inativa') + '" data-cat="' + esc(c.nome) + '">' +

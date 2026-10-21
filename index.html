@@ -189,13 +189,17 @@
     <h2 id="pr-titulo">Novo produto</h2>
     <p class="dlg-sub" id="pr-sub"></p>
 
-    <div class="pr-imagem">
-      <img id="pr-preview" src="img/sem-imagem.svg" alt="Imagem do produto" />
-      <div class="pr-imagem__acoes">
-        <label class="btn btn--sm" for="pr-arquivo">Escolher imagem</label>
-        <input type="file" id="pr-arquivo" accept="image/*" hidden />
-        <button type="button" class="btn btn--sm btn--danger" id="pr-remover-img">Remover imagem</button>
-        <span class="dlg-sub sem-margem">Sem imagem, o site mostra a imagem genérica.</span>
+    <div class="pr-fotos">
+      <div class="pr-fotos__head">
+        <strong>Fotos</strong>
+        <span class="dlg-sub sem-margem">até 4 · a 1ª é a capa do site</span>
+        <span class="pr-fotos__cont" id="pr-fotos-cont">0/4</span>
+      </div>
+      <ul class="pr-fotos__lista" id="pr-fotos"></ul>
+      <div class="pr-fotos__acoes">
+        <label class="btn btn--sm" for="pr-arquivo" id="pr-add-foto">+ Adicionar fotos</label>
+        <input type="file" id="pr-arquivo" accept="image/*" multiple hidden />
+        <span class="dlg-sub sem-margem">Sem fotos, o site mostra a imagem genérica.</span>
       </div>
     </div>
 
@@ -204,7 +208,11 @@
       <label class="f">Categoria
         <select class="inp" id="pr-cat" required></select>
       </label>
-      <label class="f">Preço (R$)<input class="inp" id="pr-preco" type="number" step="0.01" min="0" required /></label>
+      <label class="f">De (R$) — preço normal<input class="inp" id="pr-preco" type="number" step="0.01" min="0" required /></label>
+    </div>
+    <div class="linha2 pr-promo">
+      <label class="f">Por (R$) — promoção<input class="inp" id="pr-promo" type="number" step="0.01" min="0" placeholder="Sem promoção" /></label>
+      <p class="dlg-sub sem-margem pr-promo__dica" id="pr-promo-dica">Deixe em branco para vender pelo preço "De". Com valor, o produto aparece também na categoria Promoção do site.</p>
     </div>
     <label class="f">Descrição (aparece no site)
       <textarea class="inp" id="pr-desc" rows="3" maxlength="300"></textarea>
@@ -214,6 +222,7 @@
       <label class="f">Estoque mínimo<input class="inp" id="pr-min" type="number" min="0" step="1" value="2" /></label>
     </div>
     <label class="chk"><input type="checkbox" id="pr-ativo" checked /> Aparece no site</label>
+    <p class="erro" id="pr-erro" hidden></p>
     <div class="dlg-acoes">
       <button class="btn" value="cancel" formnovalidate>Voltar</button>
       <button class="btn btn--primary" value="ok" id="pr-salvar">Salvar</button>
