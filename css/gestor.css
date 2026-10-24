@@ -263,3 +263,58 @@ label.f .inp { width: 100%; }
 @media (max-width: 700px) {
   .pr-fotos__lista { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ---------- Tamanhos e cores ---------- */
+.pr-opcoes { display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--line); padding: 12px; }
+.pr-opcao { display: flex; flex-direction: column; gap: 8px; }
+.pr-opcao__head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.pr-opcao__atalhos { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.pr-opcao__atalhos .btn { padding: 4px 8px; font-size: 11px; }
+.pr-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.pr-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 8px; border: 1px solid var(--venom); font-size: 13px; font-weight: 600; }
+.pr-chip__bt { background: none; border: 0; color: var(--bone-dim); padding: 0 4px; font-size: 11px; cursor: pointer; }
+.pr-chip__bt:hover { color: var(--venom); }
+.pr-chip__bt--del:hover { color: var(--danger); }
+.pr-chips__vazio { font-size: 12px; color: var(--bone-dim); }
+.pr-opcao__add { display: flex; gap: 6px; }
+.pr-opcao__add .inp { flex: 1; min-width: 0; padding: 6px 8px; }
+.opcoes-linha { font-size: 11px; color: var(--bone-dim); margin-top: 2px; }
+.variacao { color: var(--bone-dim); }
+
+/* ---------- Confirmar alteração de valor/pagamento ---------- */
+.conf-alt { border: 1px solid var(--warn); background: rgba(255, 197, 61, .08); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.conf-alt.is-ok { border-color: var(--venom); background: rgba(182, 255, 60, .06); }
+.conf-alt__texto { margin: 0; font-size: 13px; font-weight: 600; color: var(--warn); }
+.conf-alt.is-ok .conf-alt__texto { color: var(--bone); }
+.conf-alt__acoes { display: flex; align-items: center; gap: 10px; }
+.conf-alt__feito { font-size: 13px; font-weight: 700; color: var(--venom); }
+.btn--alerta { border-color: var(--warn); color: var(--warn); }
+.btn--alerta:hover { background: var(--warn); color: var(--ink-950); }
+
+/* ---------- Histórico com filtro de datas ---------- */
+.hist-resumo { margin: 0 0 8px; font-size: 13px; color: var(--bone-dim); }
+.hist__tipo { font-size: 12px; font-weight: 700; }
+.hist--pagamento .hist__tipo { color: var(--warn); }
+.hist__texto { white-space: normal; min-width: 160px; }
+.hist__obs { white-space: normal; max-width: 220px; }
+
+/* ---------- Campo de senha com botão de olho ---------- */
+.campo-senha { position: relative; display: block; }
+.campo-senha .inp { width: 100%; padding-right: 44px; }
+.revelar { position: absolute; top: 50%; right: 4px; transform: translateY(-50%); width: 36px; height: 32px;
+  display: inline-flex; align-items: center; justify-content: center; background: none; border: 0; color: var(--bone-dim); cursor: pointer; }
+.revelar:hover, .revelar[aria-pressed="true"] { color: var(--venom); }
+.revelar .revelar__fechar { display: none; }
+.revelar[aria-pressed="true"] .revelar__abrir { display: none; }
+.revelar[aria-pressed="true"] .revelar__fechar { display: block; }
+.us-login { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; color: var(--venom); }
+.us-dica { font-size: 12px; margin-top: -6px !important; }
+
+/* ---------- Campo de dinheiro (R$ 0,00) ---------- */
+.campo-dinheiro { position: relative; display: block; }
+.campo-dinheiro__rs { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: 13px; font-weight: 700; color: var(--bone-dim); pointer-events: none; }
+.campo-dinheiro .inp { width: 100%; padding-left: 36px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
+.dinheiro-dica { font-size: 12px; margin-top: -6px !important; }
+.dinheiro-dica strong { color: var(--venom); }
+
+.inp.is-faltando { border-color: var(--danger); box-shadow: 0 0 0 1px var(--danger); }

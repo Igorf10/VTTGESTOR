@@ -19,11 +19,11 @@
 <section class="login" id="tela-login">
   <form id="form-login">
     <h1>Gestor <span>VTT</span></h1>
-    <label class="f">E-mail
-      <input class="inp" type="email" id="email" autocomplete="username" required />
+    <label class="f">Usuário
+      <input class="inp" type="text" id="email" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="ex.: vttadm" required />
     </label>
     <label class="f">Senha
-      <input class="inp" type="password" id="senha" autocomplete="current-password" required />
+      <span class="campo-senha"><input class="inp" type="password" id="senha" autocomplete="current-password" required /><button type="button" class="revelar" data-revelar="senha" aria-label="Mostrar senha" aria-pressed="false" title="Mostrar senha"><svg class="revelar__abrir" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><svg class="revelar__fechar" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.9 10.9 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.2M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7c1.9 0 3.6-.6 5-1.4"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg></button></span>
     </label>
     <p class="erro" id="erro-login" hidden></p>
     <button class="btn btn--primary" type="submit" id="btn-entrar">Entrar</button>
@@ -95,13 +95,33 @@
     <!-- Histórico -->
     <section id="tab-movs" hidden>
       <div class="filtros">
+        <label class="f">De
+          <input class="inp" id="hist-de" type="date" />
+        </label>
+        <label class="f">Até
+          <input class="inp" id="hist-ate" type="date" />
+        </label>
+        <div class="seg" id="hist-atalhos">
+          <button type="button" data-hist="hoje" aria-pressed="false">Hoje</button>
+          <button type="button" data-hist="7" aria-pressed="false">7 dias</button>
+          <button type="button" data-hist="30" aria-pressed="true">30 dias</button>
+          <button type="button" data-hist="mes" aria-pressed="false">Este mês</button>
+        </div>
+        <label class="f">Tipo
+          <select class="inp" id="hist-tipo">
+            <option value="">Tudo</option>
+            <option value="estoque">Estoque</option>
+            <option value="pagamento">Pagamentos</option>
+          </select>
+        </label>
         <label class="f cresce">Buscar
-          <input class="inp" id="busca-movs" type="search" placeholder="Produto, pedido ou tipo" />
+          <input class="inp" id="busca-movs" type="search" placeholder="Produto, pedido, tipo ou usuário" />
         </label>
       </div>
+      <p class="hist-resumo" id="hist-resumo"></p>
       <div class="grupo tabela">
         <table>
-          <thead><tr><th>Data</th><th>ID</th><th>Produto</th><th>Tipo</th><th class="n">Qtd</th><th class="n">Ficou</th><th>Ref.</th><th>Obs.</th></tr></thead>
+          <thead><tr><th>Data</th><th class="m-oculta">ID</th><th>Produto / descrição</th><th>Tipo</th><th class="n">Qtd</th><th class="n m-oculta">Ficou</th><th>Ref.</th><th class="m-oculta">Usuário</th><th class="m-oculta">Obs.</th></tr></thead>
           <tbody id="lista-movs"></tbody>
         </table>
       </div>
@@ -122,24 +142,41 @@
 
 <!-- Confirmar venda -->
 <dialog id="dlg-confirmar">
-  <form method="dialog">
-    <h2>Confirmar venda</h2>
+  <form method="dialog" id="form-confirmar" novalidate>
+    <h2 id="conf-titulo">Confirmar venda</h2>
     <p class="dlg-sub" id="conf-sub"></p>
     <ul class="dlg-itens" id="conf-itens"></ul>
     <div class="linha2">
       <label class="f">Valor recebido (R$)
-        <input class="inp" id="conf-valor" type="number" step="0.01" min="0" required />
+        <span class="campo-dinheiro"><span class="campo-dinheiro__rs" aria-hidden="true">R$</span><input class="inp" id="conf-valor" type="text" inputmode="numeric" autocomplete="off" placeholder="0,00" data-dinheiro required /></span>
       </label>
       <label class="f">Pagamento
-        <select class="inp" id="conf-pag">
+        <select class="inp" id="conf-pag" required>
+          <option value="">Escolha…</option>
           <option>Pix</option><option>Dinheiro</option><option>Cartão de crédito</option><option>Cartão de débito</option><option>Outro</option>
         </select>
       </label>
     </div>
-    <p class="dlg-sub sem-margem">Ao confirmar, as peças saem do estoque.</p>
+
+    <p class="dlg-sub sem-margem dinheiro-dica">Digite só os números: os 2 últimos são os centavos. Ex.: <strong>5999</strong> vira <strong>59,99</strong>.</p>
+
+    <!-- Aparece quando o valor (ou o pagamento, ao corrigir) muda: precisa confirmar a alteração -->
+    <div class="conf-alt" id="conf-alt" hidden>
+      <p class="conf-alt__texto" id="conf-alt-texto"></p>
+      <label class="f">Motivo da alteração (obrigatório)
+        <input class="inp" id="conf-motivo" maxlength="200" placeholder="Ex.: desconto no atendimento, arredondamento" />
+      </label>
+      <div class="conf-alt__acoes">
+        <button type="button" class="btn btn--sm btn--alerta" id="conf-alt-ok">Confirmar alteração</button>
+        <span class="conf-alt__feito" id="conf-alt-feito" hidden>✓ Alteração confirmada</span>
+      </div>
+    </div>
+
+    <p class="erro" id="conf-erro" hidden></p>
+    <p class="dlg-sub sem-margem" id="conf-nota">Ao confirmar, as peças saem do estoque.</p>
     <div class="dlg-acoes">
-      <button class="btn" value="cancel" formnovalidate>Voltar</button>
-      <button class="btn btn--primary" value="ok" id="conf-ok">Confirmar</button>
+      <button class="btn" type="button" data-fechar-dlg>Voltar</button>
+      <button class="btn btn--primary" type="submit" id="conf-ok">Confirmar venda</button>
     </div>
   </form>
 </dialog>
@@ -167,7 +204,7 @@
     <div class="seg" id="aj-tipo">
       <button type="button" data-t="entrada" aria-pressed="true">Entrada</button>
       <button type="button" data-t="saida" aria-pressed="false">Saída</button>
-      <button type="button" data-t="correcao" aria-pressed="false">Contagem</button>
+      <button type="button" data-t="correcao" aria-pressed="false">Acerto de estoque</button>
     </div>
     <label class="f"><span id="aj-label">Quantidade que chegou</span>
       <input class="inp" id="aj-qtd" type="number" min="0" step="1" required />
@@ -208,15 +245,48 @@
       <label class="f">Categoria
         <select class="inp" id="pr-cat" required></select>
       </label>
-      <label class="f">De (R$) — preço normal<input class="inp" id="pr-preco" type="number" step="0.01" min="0" required /></label>
+      <label class="f">De (R$) — preço normal
+        <span class="campo-dinheiro"><span class="campo-dinheiro__rs" aria-hidden="true">R$</span><input class="inp" id="pr-preco" type="text" inputmode="numeric" autocomplete="off" placeholder="0,00" data-dinheiro required /></span>
+      </label>
     </div>
+    <p class="dlg-sub sem-margem dinheiro-dica">Digite só os números: os 2 últimos são os centavos. Ex.: <strong>5999</strong> vira <strong>59,99</strong> · <strong>250</strong> vira <strong>2,50</strong> · <strong>25000</strong> vira <strong>250,00</strong>.</p>
     <div class="linha2 pr-promo">
-      <label class="f">Por (R$) — promoção<input class="inp" id="pr-promo" type="number" step="0.01" min="0" placeholder="Sem promoção" /></label>
+      <label class="f">Por (R$) — promoção
+        <span class="campo-dinheiro"><span class="campo-dinheiro__rs" aria-hidden="true">R$</span><input class="inp" id="pr-promo" type="text" inputmode="numeric" autocomplete="off" placeholder="Sem promoção" data-dinheiro data-dinheiro-opcional /></span>
+      </label>
       <p class="dlg-sub sem-margem pr-promo__dica" id="pr-promo-dica">Deixe em branco para vender pelo preço "De". Com valor, o produto aparece também na categoria Promoção do site.</p>
     </div>
     <label class="f">Descrição (aparece no site)
       <textarea class="inp" id="pr-desc" rows="3" maxlength="300"></textarea>
     </label>
+    <!-- Tamanhos e cores que o site oferece neste produto -->
+    <div class="pr-opcoes">
+      <div class="pr-opcao" data-opcao="tamanhos">
+        <div class="pr-opcao__head">
+          <strong>Tamanhos no site</strong>
+          <span class="pr-opcao__atalhos">
+            <button type="button" class="btn btn--sm" data-atalho="P,M,G,GG">P · M · G · GG</button>
+            <button type="button" class="btn btn--sm" data-atalho="PP,P,M,G,GG,XG">PP ao XG</button>
+            <button type="button" class="btn btn--sm" data-atalho="A1,A2,A3,A4">A1 ao A4</button>
+          </span>
+        </div>
+        <ul class="pr-chips" id="pr-tamanhos"></ul>
+        <div class="pr-opcao__add">
+          <input class="inp" id="pr-tamanho-novo" maxlength="20" placeholder="Outro tamanho (ex.: 38, Único)" />
+          <button type="button" class="btn btn--sm" data-adicionar="tamanhos">Adicionar</button>
+        </div>
+      </div>
+      <div class="pr-opcao" data-opcao="cores">
+        <div class="pr-opcao__head"><strong>Cores no site</strong></div>
+        <ul class="pr-chips" id="pr-cores"></ul>
+        <div class="pr-opcao__add">
+          <input class="inp" id="pr-cor-nova" maxlength="30" placeholder="Cor (ex.: Verde, Rosa, Preto)" />
+          <button type="button" class="btn btn--sm" data-adicionar="cores">Adicionar</button>
+        </div>
+      </div>
+      <p class="dlg-sub sem-margem">Sem tamanhos ou sem cores, o site não pede essa escolha. O estoque é do produto (soma de todos os tamanhos e cores).</p>
+    </div>
+
     <div class="linha2">
       <label class="f" id="pr-est-campo">Estoque inicial<input class="inp" id="pr-est" type="number" min="0" step="1" value="0" /></label>
       <label class="f">Estoque mínimo<input class="inp" id="pr-min" type="number" min="0" step="1" value="2" /></label>
@@ -248,12 +318,13 @@
 
 <!-- Usuário: novo ou editar -->
 <dialog id="dlg-usuario">
-  <form method="dialog" id="form-usuario">
+  <form method="dialog" id="form-usuario" novalidate>
     <h2 id="us-titulo">Novo usuário</h2>
     <p class="dlg-sub" id="us-sub"></p>
     <label class="f">Nome<input class="inp" id="us-nome" maxlength="60" required /></label>
-    <label class="f" id="us-email-campo">E-mail (é o login)<input class="inp" id="us-email" type="email" maxlength="120" autocomplete="off" /></label>
-    <label class="f" id="us-senha-campo">Senha (mínimo 8 caracteres)<input class="inp" id="us-senha" type="password" minlength="8" autocomplete="new-password" /></label>
+    <label class="f">Usuário (é o login)<input class="inp" id="us-usuario" type="text" maxlength="30" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="ex.: maria" required /></label>
+    <p class="dlg-sub sem-margem us-dica" id="us-dica">Sem espaço e sem acento. Ex.: maria, marcos, joao, maria.clara</p>
+    <label class="f" id="us-senha-campo">Senha (mínimo 8 caracteres)<span class="campo-senha"><input class="inp" id="us-senha" type="password" minlength="8" autocomplete="new-password" /><button type="button" class="revelar" data-revelar="us-senha" aria-label="Mostrar senha" aria-pressed="false" title="Mostrar senha"><svg class="revelar__abrir" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><svg class="revelar__fechar" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.9 10.9 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.2M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7c1.9 0 3.6-.6 5-1.4"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg></button></span></label>
     <label class="f">Perfil
       <select class="inp" id="us-perfil">
         <option value="operador">Operador</option>
@@ -273,8 +344,8 @@
   <form method="dialog" id="form-senha">
     <h2>Trocar senha</h2>
     <p class="dlg-sub" id="se-sub"></p>
-    <label class="f">Nova senha (mínimo 8 caracteres)<input class="inp" id="se-senha" type="password" minlength="8" autocomplete="new-password" required /></label>
-    <label class="f">Repita a nova senha<input class="inp" id="se-senha2" type="password" minlength="8" autocomplete="new-password" required /></label>
+    <label class="f">Nova senha (mínimo 8 caracteres)<span class="campo-senha"><input class="inp" id="se-senha" type="password" minlength="8" autocomplete="new-password" required /><button type="button" class="revelar" data-revelar="se-senha" aria-label="Mostrar senha" aria-pressed="false" title="Mostrar senha"><svg class="revelar__abrir" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><svg class="revelar__fechar" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.9 10.9 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.2M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7c1.9 0 3.6-.6 5-1.4"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg></button></span></label>
+    <label class="f">Repita a nova senha<span class="campo-senha"><input class="inp" id="se-senha2" type="password" minlength="8" autocomplete="new-password" required /><button type="button" class="revelar" data-revelar="se-senha2" aria-label="Mostrar senha" aria-pressed="false" title="Mostrar senha"><svg class="revelar__abrir" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><svg class="revelar__fechar" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.9 10.9 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.2M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7c1.9 0 3.6-.6 5-1.4"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg></button></span></label>
     <p class="erro" id="se-erro" hidden></p>
     <div class="dlg-acoes">
       <button class="btn" type="button" data-fechar-dlg>Voltar</button>

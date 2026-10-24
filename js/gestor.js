@@ -38,7 +38,7 @@
   // Mensagens do Supabase em português
   function traduzirErro(err) {
     var msg = (err && (err.message || err.error_description || err.msg)) || String(err || '');
-    if (/Invalid login credentials/i.test(msg)) return 'E-mail ou senha incorretos.';
+    if (/Invalid login credentials/i.test(msg)) return 'Usuário ou senha incorretos.';
     if (/Email not confirmed/i.test(msg)) return 'Este usuário ainda não foi confirmado. No Supabase, crie o usuário marcando "Auto Confirm User".';
     if (/Failed to fetch|NetworkError|Load failed|network/i.test(msg)) return 'Sem conexão com o Supabase. Confira a internet.';
     if (/permission denied|not allowed|row-level security/i.test(msg)) return 'Sem permissão. Confira se você está logado e se o script SQL foi rodado no Supabase.';
@@ -60,12 +60,38 @@
     return sb.rpc(nome, args).then(checar);
   }
 
+  // ---- Histórico: movimentações de estoque + registros de pagamento, no período do filtro
+  var histFiltro = { de: '', ate: '' }; // 'AAAA-MM-DD' (definido na aba Histórico)
+
+  function inicioDoDia(d) { return new Date(d + 'T00:00:00').toISOString(); }
+  function fimDoDia(d) { return new Date(d + 'T23:59:59.999').toISOString(); }
+
+  function consultarHistorico() {
+    var de = inicioDoDia(histFiltro.de), ate = fimDoDia(histFiltro.ate);
+    return Promise.all([
+      sb.from('movimentacoes').select('*').gte('criado_em', de).lte('criado_em', ate).order('criado_em', { ascending: false }).limit(3000),
+      sb.from('registros').select('*').gte('criado_em', de).lte('criado_em', ate).order('criado_em', { ascending: false }).limit(3000),
+    ]).then(function (res) {
+      return {
+        movs: (checar(res[0]) || []).map(function (m) {
+          return {
+            data: m.criado_em, idProduto: m.produto_id || '', produto: m.produto_nome, tipo: m.tipo,
+            qtd: m.qtd, estoqueApos: m.estoque_apos, ref: m.referencia || '', obs: m.obs || '', usuario: m.usuario || '',
+          };
+        }),
+        registros: (checar(res[1]) || []).map(function (r) {
+          return { data: r.criado_em, tipo: r.tipo, ref: r.referencia || '', descricao: r.descricao || '', obs: r.obs || '', usuario: r.usuario || '' };
+        }),
+      };
+    });
+  }
+
   // Lê tudo que o Gestor mostra e devolve no mesmo formato que as telas usam
   function carregarDados() {
     return Promise.all([
       sb.from('pedidos').select('*, pedido_itens(*)').order('criado_em', { ascending: false }).limit(5000),
       sb.from('produtos').select('*, categorias(nome)').order('id'),
-      sb.from('movimentacoes').select('*').order('criado_em', { ascending: false }).limit(400),
+      consultarHistorico(),
       sb.from('categorias').select('*').order('ordem').order('id'),
       sb.rpc('meu_perfil'),
       sb.from('usuarios_gestor').select('*'),
@@ -74,14 +100,14 @@
     ]).then(function (res) {
       var perfil = checar(res[4]);
       if (!perfil || !perfil.ativo) throw new Error('SEM_ACESSO');
-      var pedidos = checar(res[0]) || [], produtos = checar(res[1]) || [], movs = checar(res[2]) || [], cats = checar(res[3]) || [];
+      var pedidos = checar(res[0]) || [], produtos = checar(res[1]) || [], hist = res[2], cats = checar(res[3]) || [];
       var sessao = res[6] && res[6].data && res[6].data.session;
       var fotosPorProduto = {};
       (checar(res[7]) || []).forEach(function (f) {
         (fotosPorProduto[f.produto_id] = fotosPorProduto[f.produto_id] || []).push({ id: f.id, url: f.url, caminho: f.caminho });
       });
       return {
-        eu: { id: sessao ? sessao.user.id : '', nome: perfil.nome, email: perfil.email, perfil: perfil.perfil },
+        eu: { id: sessao ? sessao.user.id : '', nome: perfil.nome, usuario: perfil.usuario || '', email: perfil.email, perfil: perfil.perfil },
         usuarios: checar(res[5]) || [],
         pedidos: pedidos.map(function (p) {
           return {
@@ -90,7 +116,7 @@
             status: p.status, valorFinal: p.valor_final == null ? null : Number(p.valor_final),
             pagamento: p.pagamento || '', dataConfirmacao: p.confirmado_em || '', obs: p.obs || '',
             itens: (p.pedido_itens || []).sort(function (a, b) { return a.id - b.id; }).map(function (i) {
-              return { idProduto: i.produto_id, produto: i.produto_nome, qtd: i.qtd, preco: Number(i.preco) };
+              return { idProduto: i.produto_id, produto: i.produto_nome, qtd: i.qtd, preco: Number(i.preco), tamanho: i.tamanho || '', cor: i.cor || '' };
             }),
           };
         }),
@@ -100,14 +126,11 @@
             precoPromo: v.preco_promocional == null ? null : Number(v.preco_promocional),
             estoque: v.estoque, minimo: v.minimo, ativo: v.ativo, descricao: v.descricao || '', imagem: v.imagem || '',
             fotos: fotosPorProduto[v.id] || [],
+            tamanhos: v.tamanhos || [], cores: v.cores || [],
           };
         }),
-        movs: movs.map(function (m) {
-          return {
-            data: m.criado_em, idProduto: m.produto_id || '', produto: m.produto_nome, tipo: m.tipo,
-            qtd: m.qtd, estoqueApos: m.estoque_apos, ref: m.referencia || '', obs: m.obs || '',
-          };
-        }),
+        movs: hist.movs,
+        registros: hist.registros,
         categorias: cats.map(function (c) { return { id: c.id, nome: c.nome, ativa: c.ativa, fixa: !!c.fixa }; }),
       };
     });
@@ -186,7 +209,12 @@
   var ACOES = {
     carregar: function () { return null; },
     confirmar: function (d) {
-      return rpc('confirmar_pedido', { p_id: d.id, p_valor: d.valorFinal === '' ? null : numero(d.valorFinal), p_pagamento: d.pagamento || '' });
+      return rpc('confirmar_pedido', {
+        p_id: d.id, p_valor: d.valorFinal === '' ? null : numero(d.valorFinal), p_pagamento: d.pagamento || '', p_motivo: d.motivo || '',
+      });
+    },
+    alterarPagamento: function (d) {
+      return rpc('alterar_pagamento', { p_id: d.id, p_valor: numero(d.valorFinal), p_pagamento: d.pagamento || '', p_motivo: d.motivo || '' });
     },
     cancelar: function (d) { return rpc('cancelar_pedido', { p_id: d.id, p_motivo: d.motivo || '' }); },
     ajustar: function (d) {
@@ -197,6 +225,7 @@
         p_nome: d.produto, p_categoria: d.categoria, p_preco: numero(d.preco), p_descricao: d.descricao || '',
         p_estoque: inteiro(d.estoque), p_minimo: inteiro(d.minimo), p_ativo: d.ativo !== false,
         p_preco_promocional: d.precoPromo === '' || d.precoPromo == null ? null : numero(d.precoPromo),
+        p_tamanhos: d.tamanhos || [], p_cores: d.cores || [],
       }).then(function (id) { return { novoId: id }; });
     },
     editar: function (d) {
@@ -204,6 +233,7 @@
         p_id: d.idProduto, p_nome: d.produto, p_categoria: d.categoria, p_preco: numero(d.preco),
         p_descricao: d.descricao || '', p_minimo: inteiro(d.minimo), p_ativo: !!d.ativo,
         p_preco_promocional: d.precoPromo === '' || d.precoPromo == null ? null : numero(d.precoPromo),
+        p_tamanhos: d.tamanhos || [], p_cores: d.cores || [],
       });
     },
     fotos: function (d) { return salvarFotos(d.idProduto, d.lista, d.removidas); },
@@ -269,7 +299,47 @@
     renderTudo();
   }
 
-  /* ================= Login (Supabase Auth: e-mail e senha) ================= */
+  /* ================= Login (Supabase Auth: usuário e senha) ================= */
+
+  // Login por nome de usuário: o Supabase exige e-mail, então o Gestor monta "usuario@gestor-vtt.local".
+  // Quem digitar um e-mail completo (com @) também consegue entrar.
+  var DOMINIO_LOGIN = 'gestor-vtt.local';
+
+  function normalizarUsuario(v) {
+    return String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase().trim().replace(/\s+/g, '.').replace(/[^a-z0-9._-]/g, '');
+  }
+
+  function emailDeLogin(v) {
+    v = String(v || '').trim();
+    return v.indexOf('@') >= 0 ? v.toLowerCase() : normalizarUsuario(v) + '@' + DOMINIO_LOGIN;
+  }
+
+  // Botão de olho: mostra/oculta a senha digitada
+  document.addEventListener('click', function (ev) {
+    var b = ev.target.closest('[data-revelar]');
+    if (!b) return;
+    var campo = $(b.getAttribute('data-revelar'));
+    var mostrar = campo.type === 'password';
+    campo.type = mostrar ? 'text' : 'password';
+    b.setAttribute('aria-pressed', mostrar ? 'true' : 'false');
+    b.setAttribute('aria-label', mostrar ? 'Ocultar senha' : 'Mostrar senha');
+    b.title = mostrar ? 'Ocultar senha' : 'Mostrar senha';
+    campo.focus();
+  });
+
+  // Ao fechar qualquer janela, as senhas voltam a ficar ocultas
+  function ocultarSenhas(raiz) {
+    (raiz || document).querySelectorAll('[data-revelar]').forEach(function (b) {
+      $(b.getAttribute('data-revelar')).type = 'password';
+      b.setAttribute('aria-pressed', 'false');
+      b.setAttribute('aria-label', 'Mostrar senha');
+      b.title = 'Mostrar senha';
+    });
+  }
+  document.querySelectorAll('dialog').forEach(function (d) {
+    d.addEventListener('close', function () { ocultarSenhas(d); });
+  });
 
   function mostrarApp() {
     $('tela-login').hidden = true;
@@ -294,7 +364,7 @@
       return;
     }
     $('btn-entrar').disabled = true;
-    sb.auth.signInWithPassword({ email: $('email').value.trim(), password: $('senha').value })
+    sb.auth.signInWithPassword({ email: emailDeLogin($('email').value), password: $('senha').value })
       .then(checar)
       .then(function () {
         token = 'ok';
@@ -382,19 +452,31 @@
   }
 
   // Situação de cada item de um pedido pendente: bate pelo ID e confere a descrição
-  function situacaoItem(i) {
+  // Situação de um item de pedido pendente: bate pelo ID, confere o nome e o estoque
+  // (o estoque é do produto: soma todas as linhas dele no pedido, de qualquer tamanho/cor)
+  function situacaoItem(i, pedido) {
     var v = produtoPorId(i.idProduto);
     if (!v) return { ok: false, texto: 'ID não cadastrado no estoque' };
     if (v.produto.trim().toLowerCase() !== i.produto.trim().toLowerCase()) {
       return { ok: false, texto: 'no estoque esse ID é "' + v.produto + '"' };
     }
-    if (v.estoque < i.qtd) return { ok: false, texto: 'estoque atual: ' + v.estoque };
+    var total = pedido
+      ? pedido.itens.filter(function (x) { return x.idProduto === i.idProduto; }).reduce(function (s2, x) { return s2 + x.qtd; }, 0)
+      : i.qtd;
+    if (v.estoque < total) return { ok: false, texto: 'estoque atual: ' + v.estoque };
     return { ok: true, texto: '' };
   }
 
-  function linhaItem(i, comSituacao) {
-    var s = comSituacao ? situacaoItem(i) : { ok: true };
-    return '<li><span class="id">' + esc(i.idProduto) + '</span> ' + i.qtd + '× ' + esc(i.produto) + ' — ' + reais(i.preco * i.qtd) +
+  function variacaoTexto(i) {
+    var partes = [];
+    if (i.tamanho) partes.push('Tam ' + i.tamanho);
+    if (i.cor) partes.push(i.cor);
+    return partes.length ? ' <span class="variacao">(' + esc(partes.join(' · ')) + ')</span>' : '';
+  }
+
+  function linhaItem(i, comSituacao, pedido) {
+    var s = comSituacao ? situacaoItem(i, pedido) : { ok: true };
+    return '<li><span class="id">' + esc(i.idProduto) + '</span> ' + i.qtd + '× ' + esc(i.produto) + variacaoTexto(i) + ' — ' + reais(i.preco * i.qtd) +
       (s.ok ? '' : ' <span class="falta">(' + esc(s.texto) + ')</span>') + '</li>';
   }
 
@@ -447,12 +529,14 @@
           (p.desconto > 0 ? '<small>' + reais(p.subtotal) + ' − ' + reais(p.desconto) + ' de desconto</small>' : '') +
           (p.status === 'Confirmada' && p.valorFinal != null && p.valorFinal !== p.total ? '<small>site: ' + reais(p.total) + '</small>' : '') +
         '</div>' +
-        '<ul class="ped__itens">' + p.itens.map(function (i) { return linhaItem(i, p.status === 'Pendente'); }).join('') + '</ul>' +
+        '<ul class="ped__itens">' + p.itens.map(function (i) { return linhaItem(i, p.status === 'Pendente', p); }).join('') + '</ul>' +
         (p.status === 'Pendente'
           ? '<div class="ped__acoes"><button class="btn btn--primary btn--sm" data-confirmar="' + esc(p.id) + '">Confirmar venda</button>' +
             '<button class="btn btn--danger btn--sm" data-cancelar="' + esc(p.id) + '">Cancelar</button></div>'
           : p.status === 'Confirmada'
-            ? '<div class="ped__acoes"><button class="btn btn--danger btn--sm" data-cancelar="' + esc(p.id) + '">Estornar</button></div>'
+            ? '<div class="ped__acoes">' +
+              (souAdmin() ? '<button class="btn btn--sm" data-pagamento="' + esc(p.id) + '">Editar pagamento</button>' : '') +
+              '<button class="btn btn--danger btn--sm" data-cancelar="' + esc(p.id) + '">Estornar</button></div>'
             : '') +
       '</article>';
     }).join('') : '<p class="vazio">Nenhum pedido neste período.</p>';
@@ -463,19 +547,9 @@
   function acharPedido(id) { return dados.pedidos.filter(function (p) { return p.id === id; })[0]; }
 
   $('lista-pedidos').addEventListener('click', function (ev) {
-    var bc = ev.target.closest('[data-confirmar]'), bx = ev.target.closest('[data-cancelar]');
-    if (bc) {
-      pedidoAtual = acharPedido(bc.dataset.confirmar);
-      var problemas = 0;
-      $('conf-itens').innerHTML = pedidoAtual.itens.map(function (i) { return linhaItem(i, true); }).join('');
-      problemas = pedidoAtual.itens.filter(function (i) { return !situacaoItem(i).ok; }).length;
-      $('conf-sub').textContent = pedidoAtual.id + ' · total do site ' + reais(pedidoAtual.total) +
-        (pedidoAtual.cupom ? ' (cupom ' + pedidoAtual.cupom + ')' : '') +
-        (problemas ? ' · ajuste o estoque antes de confirmar' : '');
-      $('conf-ok').disabled = problemas > 0;
-      $('conf-valor').value = pedidoAtual.total.toFixed(2);
-      $('dlg-confirmar').showModal();
-    }
+    var bc = ev.target.closest('[data-confirmar]'), bx = ev.target.closest('[data-cancelar]'), bp = ev.target.closest('[data-pagamento]');
+    if (bc) abrirPagamento(acharPedido(bc.dataset.confirmar), 'confirmar');
+    if (bp) abrirPagamento(acharPedido(bp.dataset.pagamento), 'alterar');
     if (bx) {
       pedidoAtual = acharPedido(bx.dataset.cancelar);
       var estorno = pedidoAtual.status === 'Confirmada';
@@ -489,11 +563,127 @@
     }
   });
 
-  $('dlg-confirmar').addEventListener('close', function () {
-    if (this.returnValue !== 'ok' || !pedidoAtual) return;
-    api('confirmar', { id: pedidoAtual.id, valorFinal: $('conf-valor').value, pagamento: $('conf-pag').value })
-      .then(function (r) { aplicar(r); toast('Venda confirmada e estoque atualizado'); })
-      .catch(function (e) { toast(e.message, true); });
+  /* ---------- Confirmar venda / editar pagamento (com confirmação da alteração) ---------- */
+
+  var modoPagamento = 'confirmar';   // 'confirmar' = venda pendente · 'alterar' = venda já confirmada
+  var basePagamento = { valor: 0, pagamento: '' };
+  var alteracaoConfirmada = false;
+
+  function abrirPagamento(p, modo) {
+    pedidoAtual = p;
+    modoPagamento = modo;
+    var confirmar = modo === 'confirmar';
+    var problemas = confirmar ? p.itens.filter(function (i) { return !situacaoItem(i, p).ok; }).length : 0;
+
+    basePagamento = confirmar
+      ? { valor: p.total, pagamento: '' }
+      : { valor: p.valorFinal != null ? p.valorFinal : p.total, pagamento: p.pagamento || '' };
+
+    $('conf-titulo').textContent = confirmar ? 'Confirmar venda' : 'Editar pagamento';
+    $('conf-itens').innerHTML = p.itens.map(function (i) { return linhaItem(i, confirmar, p); }).join('');
+    $('conf-sub').textContent = p.id + ' · total do site ' + reais(p.total) +
+      (p.cupom ? ' (cupom ' + p.cupom + ')' : '') +
+      (problemas ? ' · ajuste o estoque antes de confirmar' : '');
+    $('conf-valor').value = formatarDinheiro(basePagamento.valor);
+    $('conf-pag').value = basePagamento.pagamento;
+    $('conf-motivo').value = '';
+    $('conf-nota').textContent = confirmar
+      ? 'Ao confirmar, as peças saem do estoque. O valor e o pagamento ficam registrados no Histórico.'
+      : 'Só o administrador edita pagamento depois da confirmação. Fica registrado no Histórico como "Pagamento editado após a confirmação", com o seu usuário e o motivo.';
+    $('conf-ok').textContent = confirmar ? 'Confirmar venda' : 'Salvar pagamento';
+    $('conf-ok').disabled = problemas > 0;
+    $('conf-erro').hidden = true;
+    alteracaoConfirmada = false;
+    verificarAlteracao();
+    $('dlg-confirmar').showModal();
+  }
+
+  // O que mudou em relação ao valor do site (confirmar) ou ao pagamento salvo (alterar)
+  function mudancasPagamento() {
+    var valor = lerDinheiro($('conf-valor').value);
+    var lista = [];
+    if (valor != null && Math.round(valor * 100) !== Math.round(basePagamento.valor * 100)) {
+      lista.push('valor de ' + reais(basePagamento.valor) + (modoPagamento === 'confirmar' ? ' (total do site)' : '') + ' para ' + reais(valor));
+    }
+    var pag = $('conf-pag').value;
+    if (modoPagamento === 'alterar' && pag && pag !== basePagamento.pagamento) {
+      lista.push('pagamento de ' + (basePagamento.pagamento || '—') + ' para ' + pag);
+    }
+    return lista;
+  }
+
+  function verificarAlteracao() {
+    var mudou = mudancasPagamento();
+    $('conf-alt').hidden = !mudou.length;
+    if (mudou.length) {
+      $('conf-alt-texto').textContent = 'Você alterou o ' + mudou.join(' e o ') + '.';
+    }
+    $('conf-alt-ok').hidden = alteracaoConfirmada;
+    $('conf-alt-feito').hidden = !alteracaoConfirmada;
+    $('conf-alt').classList.toggle('is-ok', alteracaoConfirmada);
+  }
+
+  // Mexeu no valor/pagamento: precisa confirmar a alteração de novo
+  $('conf-motivo').addEventListener('input', function () {
+    this.classList.remove('is-faltando');
+    $('conf-erro').hidden = true;
+    if (!this.value.trim() && alteracaoConfirmada) { alteracaoConfirmada = false; verificarAlteracao(); }
+  });
+
+  ['conf-valor', 'conf-pag'].forEach(function (id) {
+    $(id).addEventListener('input', function () { alteracaoConfirmada = false; $('conf-erro').hidden = true; verificarAlteracao(); });
+    $(id).addEventListener('change', function () { alteracaoConfirmada = false; verificarAlteracao(); });
+  });
+
+  $('conf-alt-ok').addEventListener('click', function () {
+    if (!$('conf-motivo').value.trim()) {
+      $('conf-erro').textContent = 'Informe o motivo da alteração para continuar.';
+      $('conf-erro').hidden = false;
+      $('conf-motivo').classList.add('is-faltando');
+      $('conf-motivo').focus();
+      return;
+    }
+    $('conf-motivo').classList.remove('is-faltando');
+    alteracaoConfirmada = true;
+    $('conf-erro').hidden = true;
+    verificarAlteracao();
+    $('conf-ok').focus();
+  });
+
+  $('form-confirmar').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    if (!pedidoAtual) return;
+    var erro = '';
+    var valor = lerDinheiro($('conf-valor').value);
+    if (valor == null) erro = 'Informe o valor recebido.';
+    else if (!$('conf-pag').value) erro = 'Escolha a forma de pagamento.';
+    else if (mudancasPagamento().length && !$('conf-motivo').value.trim()) erro = 'Informe o motivo da alteração para continuar.';
+    else if (mudancasPagamento().length && !alteracaoConfirmada) erro = 'Confirme a alteração (botão "Confirmar alteração") antes de continuar.';
+    else if (modoPagamento === 'alterar' && !mudancasPagamento().length) erro = 'Nada mudou no pagamento.';
+    if (erro) {
+      $('conf-erro').textContent = erro;
+      $('conf-erro').hidden = false;
+      if (/motivo/.test(erro)) { $('conf-motivo').classList.add('is-faltando'); $('conf-motivo').focus(); }
+      else if (/alteração/.test(erro)) $('conf-alt-ok').focus();
+      return;
+    }
+
+    var botao = $('conf-ok');
+    botao.disabled = true;
+    var confirmar = modoPagamento === 'confirmar';
+    api(confirmar ? 'confirmar' : 'alterarPagamento', {
+      id: pedidoAtual.id, valorFinal: lerDinheiro($('conf-valor').value), pagamento: $('conf-pag').value, motivo: $('conf-motivo').value,
+    })
+      .then(function (r) {
+        aplicar(r);
+        $('dlg-confirmar').close();
+        toast(confirmar ? 'Venda confirmada e estoque atualizado' : 'Pagamento editado e registrado no Histórico');
+      })
+      .catch(function (e) {
+        $('conf-erro').textContent = e.message;
+        $('conf-erro').hidden = false;
+      })
+      .finally(function () { botao.disabled = false; });
   });
 
   $('dlg-cancelar').addEventListener('close', function () {
@@ -572,7 +762,10 @@
           var foraDoSite = !v.ativo ? ' (fora do site)' : !categoriaAtiva(v.categoria) ? ' (categoria desativada)' : '';
           return '<tr class="' + estadoVar(v) + '">' +
             '<td><img class="thumb" src="' + esc(imagemDe(v)) + '" alt="" loading="lazy" data-produto-img /></td>' +
-            '<td class="id">' + esc(v.id) + '</td><td class="nome">' + esc(v.produto) + esc(foraDoSite) + '</td>' +
+            '<td class="id">' + esc(v.id) + '</td><td class="nome">' + esc(v.produto) + esc(foraDoSite) +
+              (v.tamanhos.length || v.cores.length
+                ? '<div class="opcoes-linha">' + esc([v.tamanhos.join(', '), v.cores.join(', ')].filter(Boolean).join(' · ')) + '</div>'
+                : '') + '</td>' +
             '<td class="m-oculta">' + esc(v.categoria) + '</td><td class="n m-oculta">' + precoCelula(v) + '</td>' +
             '<td class="n est">' + v.estoque + '</td><td class="n m-oculta">' + (pend[v.id] || '—') + '</td><td class="n m-oculta">' + v.minimo + '</td>' +
             '<td class="n"><div class="acoes"><button class="btn btn--sm" data-ajustar="' + esc(v.id) + '">Ajustar</button>' +
@@ -608,7 +801,7 @@
   function definirTipo(t) {
     tipoAjuste = t;
     $('aj-tipo').querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.t === t ? 'true' : 'false'); });
-    $('aj-label').textContent = { entrada: 'Quantidade que chegou', saida: 'Quantidade que saiu', correcao: 'Quantidade contada na prateleira' }[t];
+    $('aj-label').textContent = { entrada: 'Quantidade que chegou', saida: 'Quantidade que saiu', correcao: 'Quantidade certa (contada na prateleira)' }[t];
     previaAjuste();
   }
 
@@ -666,8 +859,8 @@
       : 'O ID não muda. Estoque atual: ' + v.estoque + ' (use Ajustar para mudar).';
     $('pr-nome').value = novo ? '' : v.produto;
     preencherSelectCategorias(novo ? '' : v.categoria);
-    $('pr-preco').value = novo ? '' : v.preco.toFixed(2);
-    $('pr-promo').value = novo || v.precoPromo == null ? '' : v.precoPromo.toFixed(2);
+    $('pr-preco').value = novo ? '' : formatarDinheiro(v.preco);
+    $('pr-promo').value = novo || v.precoPromo == null ? '' : formatarDinheiro(v.precoPromo);
     // Promoção é só com o administrador
     var admin = souAdmin();
     $('pr-promo').disabled = !admin;
@@ -677,6 +870,10 @@
       : 'Só o administrador coloca ou muda promoção.';
     $('pr-erro').hidden = true;
     $('pr-desc').value = novo ? '' : v.descricao;
+    opcoesEdit = { tamanhos: novo ? [] : v.tamanhos.slice(), cores: novo ? [] : v.cores.slice() };
+    $('pr-tamanho-novo').value = '';
+    $('pr-cor-nova').value = '';
+    renderOpcoes();
     $('pr-est').value = 0;
     $('pr-est-campo').hidden = !novo;
     $('pr-min').value = novo ? 2 : v.minimo;
@@ -778,17 +975,115 @@
 
   $('btn-novo').addEventListener('click', function () { abrirProduto(null); });
 
+  /* ---------- Campo de dinheiro: digita só números, os 2 últimos são os centavos ---------- */
+  // 5999 → 59,99 · 250 → 2,50 · 25000 → 250,00 (não dá para esquecer a vírgula)
+
+  function formatarDinheiro(valor) {
+    return Number(valor || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  // "1.234,56" → 1234.56 · "" → null
+  function lerDinheiro(texto) {
+    var digitos = String(texto || '').replace(/\D/g, '');
+    if (!digitos) return null;
+    return Number(digitos) / 100;
+  }
+
+  function mascararDinheiro(campo) {
+    var digitos = campo.value.replace(/\D/g, '').replace(/^0+(?=\d)/, '').slice(0, 9); // até 9.999.999,99
+    campo.value = digitos ? formatarDinheiro(Number(digitos) / 100) : '';
+  }
+
+  document.querySelectorAll('[data-dinheiro]').forEach(function (campo) {
+    campo.addEventListener('input', function () {
+      mascararDinheiro(campo);
+      // cursor sempre no fim (os números entram pela direita)
+      var fim = campo.value.length;
+      campo.setSelectionRange(fim, fim);
+    });
+    campo.addEventListener('focus', function () {
+      // mede o fim só na hora (se a pessoa já começou a digitar, não volta o cursor para trás)
+      setTimeout(function () { var fim = campo.value.length; campo.setSelectionRange(fim, fim); }, 0);
+    });
+  });
+
+  /* ---------- Tamanhos e cores do produto ---------- */
+
+  var opcoesEdit = { tamanhos: [], cores: [] };
+  var LIMITE_OPCOES = 15;
+
+  function renderOpcoes() {
+    ['tamanhos', 'cores'].forEach(function (tipo) {
+      var lista = opcoesEdit[tipo];
+      $('pr-' + tipo).innerHTML = lista.length
+        ? lista.map(function (valor, i) {
+            return '<li class="pr-chip">' +
+              (i > 0 ? '<button type="button" class="pr-chip__bt" data-opcao-mover="' + tipo + '" data-i="' + i + '" aria-label="Mover para a esquerda">◀</button>' : '') +
+              '<span>' + esc(valor) + '</span>' +
+              '<button type="button" class="pr-chip__bt pr-chip__bt--del" data-opcao-remover="' + tipo + '" data-i="' + i + '" aria-label="Remover ' + esc(valor) + '">✕</button>' +
+            '</li>';
+          }).join('')
+        : '<li class="pr-chips__vazio">' + (tipo === 'tamanhos' ? 'Nenhum tamanho: o site não pede tamanho.' : 'Nenhuma cor: o site não pede cor.') + '</li>';
+    });
+  }
+
+  // Acrescenta valores (aceita "P, M, G" de uma vez); ignora repetidos
+  function adicionarOpcoes(tipo, texto) {
+    var max = tipo === 'tamanhos' ? 20 : 30;
+    String(texto || '').split(',').forEach(function (v) {
+      v = v.trim().slice(0, max);
+      if (!v || opcoesEdit[tipo].length >= LIMITE_OPCOES) return;
+      var existe = opcoesEdit[tipo].some(function (x) { return x.toLowerCase() === v.toLowerCase(); });
+      if (!existe) opcoesEdit[tipo].push(v);
+    });
+    renderOpcoes();
+  }
+
+  document.querySelector('.pr-opcoes').addEventListener('click', function (ev) {
+    var b = ev.target.closest('button');
+    if (!b) return;
+    var tipo, i;
+    if (b.hasAttribute('data-atalho')) {
+      opcoesEdit.tamanhos = [];
+      adicionarOpcoes('tamanhos', b.getAttribute('data-atalho'));
+    } else if (b.hasAttribute('data-adicionar')) {
+      tipo = b.getAttribute('data-adicionar');
+      var campo = tipo === 'tamanhos' ? $('pr-tamanho-novo') : $('pr-cor-nova');
+      adicionarOpcoes(tipo, campo.value);
+      campo.value = '';
+      campo.focus();
+    } else if (b.hasAttribute('data-opcao-remover')) {
+      tipo = b.getAttribute('data-opcao-remover'); i = Number(b.getAttribute('data-i'));
+      opcoesEdit[tipo].splice(i, 1);
+      renderOpcoes();
+    } else if (b.hasAttribute('data-opcao-mover')) {
+      tipo = b.getAttribute('data-opcao-mover'); i = Number(b.getAttribute('data-i'));
+      var l = opcoesEdit[tipo], t = l[i - 1]; l[i - 1] = l[i]; l[i] = t;
+      renderOpcoes();
+    }
+  });
+
+  // Enter no campo de tamanho/cor adiciona (em vez de salvar o produto)
+  ['pr-tamanho-novo', 'pr-cor-nova'].forEach(function (id) {
+    $(id).addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      adicionarOpcoes(id === 'pr-tamanho-novo' ? 'tamanhos' : 'cores', this.value);
+      this.value = '';
+    });
+  });
+
   // Confere De/Por antes de fechar o formulário
   $('form-produto').addEventListener('submit', function (ev) {
-    var de = parseFloat($('pr-preco').value), por = $('pr-promo').value.trim();
+    var de = lerDinheiro($('pr-preco').value), por = lerDinheiro($('pr-promo').value);
     var msg = '';
-    if (por !== '' && !(parseFloat(por) >= 0)) msg = 'Preço "Por" inválido.';
-    else if (por !== '' && parseFloat(por) >= de) msg = 'O preço "Por" precisa ser menor que o preço "De".';
+    if (de == null) msg = 'Informe o preço "De".';
+    else if (por != null && por >= de) msg = 'O preço "Por" precisa ser menor que o preço "De".';
     if (msg) {
       ev.preventDefault();
       $('pr-erro').textContent = msg;
       $('pr-erro').hidden = false;
-      $('pr-promo').focus();
+      $(de == null ? 'pr-preco' : 'pr-promo').focus();
     }
   });
 
@@ -799,9 +1094,10 @@
     var listaFotos = fotosEdit.slice();
     var removidas = fotosRemovidas.slice();
     var dadosProduto = {
-      produto: $('pr-nome').value, categoria: $('pr-cat').value, preco: $('pr-preco').value,
-      precoPromo: $('pr-promo').value.trim(),
+      produto: $('pr-nome').value, categoria: $('pr-cat').value, preco: lerDinheiro($('pr-preco').value),
+      precoPromo: lerDinheiro($('pr-promo').value) == null ? '' : lerDinheiro($('pr-promo').value),
       descricao: $('pr-desc').value, minimo: $('pr-min').value, ativo: $('pr-ativo').checked,
+      tamanhos: opcoesEdit.tamanhos.slice(), cores: opcoesEdit.cores.slice(),
     };
 
     var passo;
@@ -970,7 +1266,7 @@
 
   function renderUsuarios() {
     var eu = dados.eu || {};
-    $('top-usuario').textContent = eu.nome || eu.email || '';
+    $('top-usuario').textContent = eu.nome || eu.usuario || '';
     $('tab-btn-usuarios').hidden = !souAdmin();
     if (!souAdmin()) {
       // Perdeu o perfil de admin com a aba aberta: volta para Pedidos
@@ -979,17 +1275,17 @@
     }
 
     var lista = (dados.usuarios || []).slice().sort(function (a, b) {
-      return (a.nome || a.email).localeCompare(b.nome || b.email, 'pt-BR');
+      return (a.nome || a.usuario || '').localeCompare(b.nome || b.usuario || '', 'pt-BR');
     });
     $('lista-usuarios').innerHTML = lista.length
       ? '<div class="grupo"><div class="grupo__head"><h3>Usuários</h3><span>' + lista.length + ' cadastrados</span></div>' +
-        '<div class="tabela"><table><thead><tr><th>Nome</th><th class="m-oculta">E-mail</th><th>Perfil</th><th class="m-oculta">Situação</th><th></th></tr></thead><tbody>' +
+        '<div class="tabela"><table><thead><tr><th>Nome</th><th>Usuário</th><th>Perfil</th><th class="m-oculta">Situação</th><th></th></tr></thead><tbody>' +
         lista.map(function (u) {
           var voce = u.user_id === eu.id;
           return '<tr class="' + (u.ativo ? '' : 'us-inativo') + '">' +
             '<td class="nome">' + esc(u.nome || '—') + (voce ? '<span class="us-voce">(você)</span>' : '') +
               '</td>' +
-            '<td class="m-oculta">' + esc(u.email) + '</td>' +
+            '<td class="us-login">' + esc(u.usuario || '') + '</td>' +
             '<td><span class="perfil perfil--' + esc(u.perfil) + '">' + (u.perfil === 'admin' ? 'Admin' : 'Operador') + '</span></td>' +
             '<td class="m-oculta">' + (u.ativo ? 'Ativo' : 'Desativado') + '</td>' +
             '<td class="n"><div class="acoes acoes--usuario">' +
@@ -1037,14 +1333,13 @@
     usuarioAtual = u;
     var novo = !u;
     $('us-titulo').textContent = novo ? 'Novo usuário' : 'Editar usuário';
-    $('us-sub').textContent = novo ? 'A pessoa entra no Gestor com este e-mail e esta senha.' : u.email;
+    $('us-sub').textContent = novo ? 'A pessoa entra no Gestor com este usuário e esta senha.' : 'Login atual: ' + (u.usuario || '');
     $('us-nome').value = novo ? '' : u.nome;
-    $('us-email').value = '';
+    $('us-usuario').value = novo ? '' : (u.usuario || '');
     $('us-senha').value = '';
-    $('us-email-campo').hidden = !novo;
     $('us-senha-campo').hidden = !novo;
-    $('us-email').required = novo;
     $('us-senha').required = novo;
+    atualizarDicaUsuario();
     $('us-perfil').value = novo ? 'operador' : u.perfil;
     $('us-perfil').disabled = !novo && u.user_id === (dados.eu || {}).id; // não tira o próprio admin
     mostrarErro('us-erro', '');
@@ -1053,11 +1348,36 @@
 
   $('btn-novo-usuario').addEventListener('click', function () { abrirUsuario(null); });
 
+  // Mostra como o login vai ficar (sem acento, sem espaço, minúsculo)
+  function atualizarDicaUsuario() {
+    var digitado = $('us-usuario').value;
+    var login = normalizarUsuario(digitado);
+    $('us-dica').textContent = digitado && login !== digitado
+      ? 'O login vai ficar: ' + (login || '—')
+      : 'Sem espaço e sem acento. Ex.: maria, marcos, joao, maria.clara';
+  }
+  $('us-usuario').addEventListener('input', atualizarDicaUsuario);
+
   $('form-usuario').addEventListener('submit', function (ev) {
     ev.preventDefault();
     var corpo = usuarioAtual
-      ? { acao: 'editar', id: usuarioAtual.user_id, nome: $('us-nome').value, perfil: $('us-perfil').value }
-      : { acao: 'criar', nome: $('us-nome').value, email: $('us-email').value, senha: $('us-senha').value, perfil: $('us-perfil').value };
+      ? { acao: 'editar', id: usuarioAtual.user_id, nome: $('us-nome').value, usuario: normalizarUsuario($('us-usuario').value), perfil: $('us-perfil').value }
+      : { acao: 'criar', nome: $('us-nome').value, usuario: normalizarUsuario($('us-usuario').value), senha: $('us-senha').value, perfil: $('us-perfil').value };
+    if (!corpo.nome.trim()) {
+      mostrarErro('us-erro', 'Preencha o nome.');
+      $('us-nome').focus();
+      return;
+    }
+    if (corpo.acao === 'criar' && corpo.senha.length < 8) {
+      mostrarErro('us-erro', 'A senha precisa ter pelo menos 8 caracteres.');
+      $('us-senha').focus();
+      return;
+    }
+    if (!/^[a-z0-9._-]{3,30}$/.test(corpo.usuario)) {
+      mostrarErro('us-erro', 'Usuário inválido: use de 3 a 30 letras ou números (pode ter ponto, hífen ou sublinhado).');
+      $('us-usuario').focus();
+      return;
+    }
     executarUsuario('dlg-usuario', 'us-erro', $('us-salvar'), corpo, usuarioAtual ? 'Usuário atualizado' : 'Usuário cadastrado');
   });
 
@@ -1085,7 +1405,7 @@
     if (b.hasAttribute('data-us-editar')) abrirUsuario(u);
 
     if (b.hasAttribute('data-us-senha')) {
-      $('se-sub').textContent = (u.nome || u.email) + ' · ' + u.email;
+      $('se-sub').textContent = (u.nome || u.usuario) + ' · usuário: ' + u.usuario;
       $('se-senha').value = '';
       $('se-senha2').value = '';
       mostrarErro('se-erro', '');
@@ -1093,7 +1413,7 @@
     }
 
     if (b.hasAttribute('data-us-excluir')) {
-      $('ex-sub').textContent = 'Excluir ' + (u.nome || u.email) + ' (' + u.email + ')? A pessoa perde o acesso ao Gestor. O histórico de pedidos e estoque continua.';
+      $('ex-sub').textContent = 'Excluir ' + (u.nome || u.usuario) + ' (usuário: ' + u.usuario + ')? A pessoa perde o acesso ao Gestor. O histórico de pedidos e estoque continua.';
       mostrarErro('ex-erro', '');
       $('dlg-excluir-usuario').showModal();
     }
@@ -1108,18 +1428,93 @@
 
   /* ================= Histórico ================= */
 
+  // Mostra só o nome do usuário (registros antigos podiam ter o e-mail completo)
+  function soUsuario(u) { return String(u || '').split('@')[0]; }
+
+  function linhasHistorico() {
+    var tipo = $('hist-tipo').value;
+    var linhas = [];
+    if (tipo !== 'pagamento') {
+      (dados.movs || []).forEach(function (m) {
+        linhas.push({ data: m.data, id: m.idProduto, texto: m.produto, tipo: m.tipo, qtd: m.qtd, ficou: m.estoqueApos, ref: m.ref, usuario: soUsuario(m.usuario), obs: m.obs, grupo: 'estoque' });
+      });
+    }
+    if (tipo !== 'estoque') {
+      (dados.registros || []).forEach(function (r) {
+        linhas.push({ data: r.data, id: '', texto: r.descricao, tipo: r.tipo, qtd: null, ficou: null, ref: r.ref, usuario: soUsuario(r.usuario), obs: r.obs, grupo: 'pagamento' });
+      });
+    }
+    return linhas.sort(function (a, b) { return new Date(b.data) - new Date(a.data); });
+  }
+
   function renderMovs() {
     var q = $('busca-movs').value.trim().toLowerCase();
-    var lista = dados.movs.filter(function (m) {
-      return !q || (m.idProduto + ' ' + m.produto + ' ' + m.tipo + ' ' + m.ref + ' ' + m.obs).toLowerCase().indexOf(q) >= 0;
+    var lista = linhasHistorico().filter(function (m) {
+      return !q || (m.id + ' ' + m.texto + ' ' + m.tipo + ' ' + m.ref + ' ' + m.obs + ' ' + m.usuario).toLowerCase().indexOf(q) >= 0;
     });
+    var dataBR = function (d) { var p = d.split('-'); return p[2] + '/' + p[1] + '/' + p[0]; };
+    $('hist-resumo').textContent = lista.length + (lista.length === 1 ? ' registro' : ' registros') +
+      ' de ' + dataBR(histFiltro.de) + ' a ' + dataBR(histFiltro.ate);
     $('lista-movs').innerHTML = lista.length ? lista.map(function (m) {
-      return '<tr><td>' + dataHora(m.data) + '</td><td class="id">' + esc(m.idProduto) + '</td><td>' + esc(m.produto) + '</td>' +
-        '<td>' + esc(m.tipo) + '</td><td class="n ' + (m.qtd > 0 ? 'pos' : 'neg') + '">' + (m.qtd > 0 ? '+' : '') + m.qtd + '</td>' +
-        '<td class="n">' + m.estoqueApos + '</td><td>' + esc(m.ref) + '</td><td>' + esc(m.obs) + '</td></tr>';
-    }).join('') : '<tr><td colspan="8" class="vazio">Sem movimentações.</td></tr>';
+      var qtd = m.qtd == null ? '' : '<span class="' + (m.qtd > 0 ? 'pos' : 'neg') + '">' + (m.qtd > 0 ? '+' : '') + m.qtd + '</span>';
+      return '<tr class="hist--' + m.grupo + '"><td>' + dataHora(m.data) + '</td><td class="id m-oculta">' + esc(m.id) + '</td>' +
+        '<td class="hist__texto">' + esc(m.texto) + '</td><td><span class="hist__tipo">' + esc(m.tipo) + '</span></td>' +
+        '<td class="n">' + qtd + '</td><td class="n m-oculta">' + (m.ficou == null ? '' : m.ficou) + '</td>' +
+        '<td>' + esc(m.ref) + '</td><td class="m-oculta">' + esc(m.usuario) + '</td><td class="m-oculta hist__obs">' + esc(m.obs) + '</td></tr>';
+    }).join('') : '<tr><td colspan="9" class="vazio">Nada registrado neste período.</td></tr>';
   }
+
   $('busca-movs').addEventListener('input', renderMovs);
+  $('hist-tipo').addEventListener('change', renderMovs);
+
+  // Datas do filtro (padrão: últimos 30 dias)
+  function dataISO(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+
+  function definirPeriodoHistorico(atalho) {
+    var hojeD = new Date(), de = new Date();
+    if (atalho === 'hoje') de = hojeD;
+    else if (atalho === '7') de.setDate(hojeD.getDate() - 6);
+    else if (atalho === 'mes') de = new Date(hojeD.getFullYear(), hojeD.getMonth(), 1);
+    else de.setDate(hojeD.getDate() - 29);
+    histFiltro.de = dataISO(de);
+    histFiltro.ate = dataISO(hojeD);
+    $('hist-de').value = histFiltro.de;
+    $('hist-ate').value = histFiltro.ate;
+    $('hist-atalhos').querySelectorAll('button').forEach(function (b) {
+      b.setAttribute('aria-pressed', b.getAttribute('data-hist') === atalho ? 'true' : 'false');
+    });
+  }
+  definirPeriodoHistorico('30');
+
+  function recarregarHistorico() {
+    if (!sb || !token) return;
+    $('carregando').hidden = false;
+    consultarHistorico()
+      .then(function (h) { dados.movs = h.movs; dados.registros = h.registros; renderMovs(); })
+      .catch(function (e) { toast(traduzirErro(e), true); })
+      .finally(function () { $('carregando').hidden = true; });
+  }
+
+  $('hist-atalhos').addEventListener('click', function (ev) {
+    var b = ev.target.closest('[data-hist]');
+    if (!b) return;
+    definirPeriodoHistorico(b.getAttribute('data-hist'));
+    recarregarHistorico();
+  });
+
+  ['hist-de', 'hist-ate'].forEach(function (id) {
+    $(id).addEventListener('change', function () {
+      if (!$('hist-de').value || !$('hist-ate').value) return;
+      // Datas invertidas: troca para o período fazer sentido
+      if ($('hist-de').value > $('hist-ate').value) {
+        var t = $('hist-de').value; $('hist-de').value = $('hist-ate').value; $('hist-ate').value = t;
+      }
+      histFiltro.de = $('hist-de').value;
+      histFiltro.ate = $('hist-ate').value;
+      $('hist-atalhos').querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', 'false'); });
+      recarregarHistorico();
+    });
+  });
 
   /* ================= Tudo ================= */
 
