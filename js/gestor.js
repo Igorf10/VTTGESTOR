@@ -1128,6 +1128,7 @@
   }
 
   var catEditando = null; // nome da categoria sendo renomeada na própria lista
+  var catExcluindo = null; // nome da categoria esperando a confirmação de exclusão
 
   function renderCategorias() {
     var cats = dados.categorias || [];
@@ -1137,6 +1138,14 @@
 
     $('lista-cats').innerHTML = cats.length ? cats.map(function (c, i) {
       var qtd = qtdProdutosDaCategoria(c.nome);
+      if (c.nome === catExcluindo) {
+        // Confirmação na própria lista (sem pop-up do navegador)
+        return '<li class="cats__confirmando" data-cat="' + esc(c.nome) + '">' +
+          '<span class="cats__pergunta">Excluir a categoria <strong>' + esc(c.nome) + '</strong>? Não dá para desfazer.</span>' +
+          '<button type="button" class="btn btn--sm btn--danger" data-acao="confirmar-exclusao">Excluir</button>' +
+          '<button type="button" class="btn btn--sm" data-acao="cancelar-exclusao">Cancelar</button>' +
+        '</li>';
+      }
       if (c.nome === catEditando) {
         return '<li class="cats__editando" data-cat="' + esc(c.nome) + '">' +
           '<input class="inp cats__input" maxlength="40" value="' + esc(digitado != null ? digitado : c.nome) + '" aria-label="Novo nome da categoria" />' +
@@ -1232,7 +1241,19 @@
     } else if (acao === 'ativar') {
       acaoCategoria('categoriaAtivar', { nome: nome, ativa: !c.ativa }, c.ativa ? 'Categoria desativada (fora do site)' : 'Categoria ativada');
     } else if (acao === 'excluir') {
-      if (window.confirm('Excluir a categoria "' + nome + '"?')) acaoCategoria('categoriaExcluir', { nome: nome }, 'Categoria excluída');
+      catEditando = null;
+      catExcluindo = nome;
+      renderCategorias();
+      // Foco no "Cancelar": um Enter sem querer não apaga a categoria
+      var cancelar = $('lista-cats').querySelector('[data-acao="cancelar-exclusao"]');
+      if (cancelar) cancelar.focus();
+    } else if (acao === 'cancelar-exclusao') {
+      catExcluindo = null;
+      renderCategorias();
+    } else if (acao === 'confirmar-exclusao') {
+      b.disabled = true;
+      catExcluindo = null;
+      acaoCategoria('categoriaExcluir', { nome: nome }, 'Categoria excluída').then(renderCategorias);
     }
   });
 
@@ -1244,10 +1265,12 @@
   });
 
   $('dlg-categorias').addEventListener('cancel', function (e) {
+    // Esc com a confirmação de exclusão aberta: só cancela a exclusão
+    if (catExcluindo) { e.preventDefault(); catExcluindo = null; renderCategorias(); return; }
     if (catEditando) { e.preventDefault(); cancelarRenomear(); }
   });
 
-  $('dlg-categorias').addEventListener('close', function () { catEditando = null; });
+  $('dlg-categorias').addEventListener('close', function () { catEditando = null; catExcluindo = null; });
 
   function adicionarCategoria() {
     var nome = $('cat-nova').value.trim();

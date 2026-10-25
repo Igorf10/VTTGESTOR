@@ -318,3 +318,8 @@ label.f .inp { width: 100%; }
 .dinheiro-dica strong { color: var(--venom); }
 
 .inp.is-faltando { border-color: var(--danger); box-shadow: 0 0 0 1px var(--danger); }
+
+/* Confirmação de exclusão de categoria na própria lista */
+.cats li.cats__confirmando { flex-wrap: wrap; background: rgba(255, 92, 61, .08); border-left: 3px solid var(--danger); }
+.cats__pergunta { flex: 1 1 200px; font-size: 13px; color: var(--bone); }
+.cats__pergunta strong { color: var(--danger); }
